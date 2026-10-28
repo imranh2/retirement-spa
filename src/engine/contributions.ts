@@ -20,6 +20,8 @@ export function grossSalary(person: Person, age: number, t: number, inflationInd
  * escalatesWithInflation multiplies fixed amounts by the inflation index.
  */
 export function contributionAmount(c: Contribution, person: Person, age: number, grossSalaryThisYear: number, inflationIndex: number): number {
+  // Outside money (a gift or inheritance) arrives at its age whether or not the payer still works.
+  if (c.type === 'lumpSum' && c.source === 'external') return age === c.startAge ? c.amount * (c.escalatesWithInflation ? inflationIndex : 1) : 0;
   const stopsWith = c.stopsWith ?? 'age';
   const stoppedWork = age >= person.retirementAge && stopsWith !== 'ageEvenAfterWork';
   const pastEndAge = age >= c.endAge && stopsWith !== 'work';
@@ -48,7 +50,7 @@ export interface ContributionPlan {
   netPayGross: number[];
   /** Per person: gross relief-at-source contributions (basic band extension). */
   reliefAtSourceGross: number[];
-  /** Household outgoing paid from take-home pay: RAS outlay + ISA/LISA/GIA/cash contributions + net pay gross. */
+  /** Household outgoing paid from take-home pay: RAS outlay + ISA/LISA/GIA/cash contributions + net pay gross (not outside money). */
   fromTakeHome: number;
   /** Per person: total gross pension contributions actually made. */
   pensionGross: number[];
@@ -105,7 +107,9 @@ export function planContributions(
     return gia >= 0 ? gia : firstCash;
   };
 
-  interface Req { acc: number; amount: number; employer: boolean }
+  interface Req { acc: number; amount: number; employer: boolean; external: boolean }
+  /** Charge a contribution to take-home pay, unless the money comes from outside the plan. */
+  const fromPay = (r: Pick<Req, 'external'>, amount: number) => { if (!r.external) fromTakeHome += amount; };
   const pensionReqs: Req[][] = Array.from({ length: n }, () => []);
   const isaReqs: Req[][] = Array.from({ length: n }, () => []);
   const lisaReqs: Req[][] = Array.from({ length: n }, () => []);
@@ -117,11 +121,11 @@ export function planContributions(
     const amount = contributionAmount(c, people[c.personIndex], py.age, py.grossSalary, inflationIndex);
     if (amount <= 0) continue;
     const acc = accounts[ai];
-    const req: Req = { acc: ai, amount, employer: c.type === 'employerPctOfSalary' };
+    const req: Req = { acc: ai, amount, employer: c.type === 'employerPctOfSalary', external: c.type === 'lumpSum' && c.source === 'external' };
     if (acc.type === 'dcPension') pensionReqs[c.personIndex].push(req);
     else if (acc.type === 'isa') isaReqs[c.personIndex].push(req);
     else if (acc.type === 'lisa') lisaReqs[c.personIndex].push(req);
-    else { credits[ai] += amount; fromTakeHome += amount; }
+    else { credits[ai] += amount; fromPay(req, amount); }
   }
 
   for (let p = 0; p < n; p++) {
@@ -156,10 +160,10 @@ export function planContributions(
         if (r.employer) continue;
         if (accounts[r.acc].pensionReliefMethod === 'reliefAtSource') {
           reliefAtSourceGross[p] += gross;
-          fromTakeHome += pensionContributionCostReliefAtSource(gross, cfg).outlay;
+          fromPay(r, pensionContributionCostReliefAtSource(gross, cfg).outlay);
         } else {
           netPayGross[p] += gross;
-          fromTakeHome += gross;
+          fromPay(r, gross);
         }
       }
     }
@@ -168,11 +172,11 @@ export function planContributions(
     let isaRoom = cfg.isa.annualAllowance;
     let lisaRoom = py.age < cfg.lisa.maxContributionAge ? cfg.lisa.annualAllowance : 0;
     const overflowTo = overflowTarget(p);
-    const sendOverflow = (amount: number) => {
+    const sendOverflow = (r: Req, amount: number) => {
       if (amount <= 0) return;
       isaOverflow = true;
       if (overflowTo >= 0) credits[overflowTo] += amount;
-      fromTakeHome += amount;
+      fromPay(r, amount);
     };
     for (const r of lisaReqs[p]) {
       const open = lisaOpen === undefined || lisaOpen[r.acc] || lisaOpened.includes(r.acc);
@@ -181,22 +185,22 @@ export function planContributions(
         // Not allowed into a LISA at this age: the money is saved in the overflow account instead.
         lisaIneligible = true;
         if (overflowTo >= 0) credits[overflowTo] += r.amount;
-        fromTakeHome += r.amount;
+        fromPay(r, r.amount);
         continue;
       }
       if (!open) lisaOpened.push(r.acc);
       const take = Math.max(0, Math.min(r.amount, lisaRoom, isaRoom));
       lisaRoom -= take; isaRoom -= take;
       credits[r.acc] += take * (1 + cfg.lisa.bonusRate);
-      fromTakeHome += take;
-      sendOverflow(r.amount - take);
+      fromPay(r, take);
+      sendOverflow(r, r.amount - take);
     }
     for (const r of isaReqs[p]) {
       const take = Math.max(0, Math.min(r.amount, isaRoom));
       isaRoom -= take;
       credits[r.acc] += take;
-      fromTakeHome += take;
-      sendOverflow(r.amount - take);
+      fromPay(r, take);
+      sendOverflow(r, r.amount - take);
     }
     isaRoomLeft[p] = isaRoom;
   }

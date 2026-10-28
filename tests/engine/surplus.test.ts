@@ -87,3 +87,50 @@ describe('contributions after stopping work', () => {
     expect(run(later).map((r) => r.savedFromPay)).toEqual([12_000, 12_000, 12_000, 0].map((v) => expect.closeTo(v, 6)));
   });
 });
+
+describe('one-off lump sums from outside money', () => {
+  const lump = (accountId: string, amount: number, startAge: number, source?: 'pay' | 'external') =>
+    ({ id: 'l', accountId, personIndex: 0, type: 'lumpSum' as const, amount, startAge, endAge: startAge + 1, escalatesWithInflation: false, source });
+
+  it('adds to the account without coming out of income or other accounts, even after stopping work', () => {
+    // Retired at 60, with £100k cash; an inheritance of £15k arrives into the ISA at 61.
+    const s = cashOnlyScenario({ startAge: 60, pot: 100_000, spend: 0, horizonYears: 3 });
+    s.accounts.push(account('isa', 'isa', 0, { allocation: { equities: 0, bonds: 0, cash: 1, property: 0 } }));
+    s.contributions = [lump('isa', 15_000, 61, 'external')];
+    const rows = run(s);
+    expect(rows[1].savedFromPay).toBe(0);
+    expect(rows[1].drawCash).toBe(0);
+    expect(rows.map((r) => r.portfolioEnd)).toEqual([100_000, 115_000, 115_000].map((v) => expect.closeTo(v, 6)));
+    // Paid from savings instead, the same lump sum is not made at all once retired (the default rule).
+    const fromPay = { ...s, contributions: [lump('isa', 15_000, 61, 'pay')] };
+    expect(run(fromPay)[1].portfolioEnd).toBeCloseTo(100_000, 6);
+  });
+
+  it('still respects the ISA allowance: the excess goes to the GIA', () => {
+    const s = earner(30_000, { kind: 'spend' });
+    s.contributions = [lump('isa', 30_000, 40, 'external')];
+    const row = run(s)[0];
+    expect(row.portfolioEnd).toBeCloseTo(30_000, 6);
+    expect(row.savedFromPay).toBe(0);
+  });
+
+  it('into a relief-at-source pension: gets the relief, counts towards the caps, costs no take-home pay', () => {
+    const s = earner(50_000, { kind: 'spend' });
+    s.accounts.push(account('sipp', 'dcPension', 0, { allocation: { equities: 0, bonds: 0, cash: 1, property: 0 }, pensionReliefMethod: 'reliefAtSource' }));
+    s.contributions = [lump('sipp', 8_000, 40, 'external')];
+    const row = run(s)[0];
+    expect(row.portfolioEnd).toBeCloseTo(8_000, 6);           // gross amount reaches the pot
+    expect(row.savedFromPay).toBe(0);
+    s.contributions = [lump('sipp', 80_000, 40, 'external')];
+    expect(run(s)[0].portfolioEnd).toBeCloseTo(50_000, 6);     // capped at 100% of earnings
+  });
+
+  it('is rejected for net pay pensions and for anything but a lump sum', () => {
+    const s = earner(50_000);
+    s.accounts.push(account('pen', 'dcPension', 0));
+    s.contributions = [lump('pen', 5_000, 40, 'external')];
+    expect(validateScenario(s, TEST_CONFIG).map((i) => i.path)).toContain('contributions[0].source');
+    s.contributions = [{ ...lump('isa', 100, 40, 'external'), type: 'fixedMonthly' }];
+    expect(validateScenario(s, TEST_CONFIG).map((i) => i.path)).toContain('contributions[0].source');
+  });
+});

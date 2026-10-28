@@ -102,7 +102,11 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     if (!CONTRIBUTION_TYPES.includes(c.type)) add(`${pre}.type`, 'Unknown contribution type');
     if (!Number.isInteger(c.startAge)) add(`${pre}.startAge`, 'Start age must be a whole number');
     if (c.stopsWith !== undefined && !['work', 'age', 'ageEvenAfterWork'].includes(c.stopsWith)) add(`${pre}.stopsWith`, 'Choose when payments stop');
-    if (c.stopsWith !== 'work' && (!finite(c.startAge) || !finite(c.endAge) || c.endAge <= c.startAge)) add(`${pre}.endAge`, 'End age must be after start age');
+    if (c.source !== undefined && !['pay', 'external'].includes(c.source)) add(`${pre}.source`, 'Choose where the money comes from');
+    else if (c.source === 'external' && c.type !== 'lumpSum') add(`${pre}.source`, 'Only a one-off lump sum can come from outside money');
+    else if (c.source === 'external' && acc?.type === 'dcPension' && (acc.pensionReliefMethod ?? 'netPay') === 'netPay') add(`${pre}.source`, 'Outside money cannot go through net pay (that only works via payroll). Set this pension to relief at source on the Accounts tab, or pay it into another account.');
+    const outside = c.type === 'lumpSum' && c.source === 'external';
+    if (c.stopsWith !== 'work' && !outside && (!finite(c.startAge) || !finite(c.endAge) || c.endAge <= c.startAge)) add(`${pre}.endAge`, 'End age must be after start age');
     if (acc && validPerson(c.personIndex) && acc.type !== 'cash' && acc.type !== 'gia' && acc.ownerIndex !== c.personIndex) {
       add(`${pre}.accountId`, 'ISA, LISA and pension contributions must go into the contributor’s own account');
     }

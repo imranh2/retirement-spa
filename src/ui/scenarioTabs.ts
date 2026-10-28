@@ -379,6 +379,7 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
   const payerName = payer?.name || `person ${k.personIndex + 1}`;
   // "Even after stopping work" makes no sense for a share of salary; show those as a set age.
   const stops = isPct && k.stopsWith === 'ageEvenAfterWork' ? 'age' : (k.stopsWith ?? 'age');
+  const outside = k.type === 'lumpSum' && k.source === 'external';
   const fields: Node[] = [
     selectField({ label: 'Into account', value: k.accountId, errorPath: `${pre}.accountId`, options: [{ value: '', label: 'Choose…', disabled: true }, ...s.accounts.map((a) => ({ value: a.id, label: `${a.name} (${SHORT_LABEL[a.type]}, ${s.people[a.ownerIndex]?.name ?? '?'})` }))],
       onChange: (v) => { const a = s.accounts.find((x) => x.id === v); setS(c, `${pre}.accountId`, v); if (a && a.type !== 'cash' && a.type !== 'gia') setS(c, `${pre}.personIndex`, a.ownerIndex); c.rerender(); } }),
@@ -390,7 +391,11 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
       help: acc?.type === 'dcPension' ? 'For pensions, enter the GROSS amount reaching the pot, including tax relief. Your own payments are limited to your salary, or £3,600 a year gross into a relief-at-source pension if you earn less.' : acc?.type === 'lisa' ? 'Amount you pay in; the 25% bonus is added on top.' : 'Paid from take-home pay.',
       onChange: (v) => setS(c, `${pre}.amount`, v ?? 0) }),
     numberField({ label: k.type === 'lumpSum' ? 'Paid at' : 'From', unit: 'age', min: 0, max: 120, step: 1, value: k.startAge, errorPath: `${pre}.startAge`, help: 'The payer’s age (inclusive).', onChange: (v) => setS(c, `${pre}.startAge`, v ?? 0) }),
-    selectField({ label: 'Stop paying', value: stops, errorPath: `${pre}.stopsWith`,
+    k.type === 'lumpSum' ? selectField({ label: 'Paid from', value: k.source ?? 'pay', errorPath: `${pre}.source`,
+      help: 'Outside money (an inheritance, a gift, a bonus already received) is added to the account without coming out of your income or other accounts, and is paid at this age even after you stop work. ISA, LISA and pension allowances still apply. For a pension it must be relief at source: you pay in the amount less 20% and the provider adds the rest.',
+      options: [{ value: 'pay', label: 'My pay or savings' }, { value: 'external', label: 'Outside money (gift, inheritance…)' }],
+      onChange: (v) => { setS(c, `${pre}.source`, v); c.rerender(); } }) : null,
+    outside ? null : selectField({ label: 'Stop paying', value: stops, errorPath: `${pre}.stopsWith`,
       help: 'Payments after stopping work come out of your savings and investments, like spending does. A percentage of salary stops anyway, as there is no salary.',
       options: [
         { value: 'work', label: `When ${payerName} stops work (age ${payer?.retirementAge ?? '—'})` },
@@ -403,7 +408,7 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
         if (v !== 'work' && !(k.endAge > k.startAge && k.endAge < MAX_CONTRIBUTION_AGE)) setS(c, `${pre}.endAge`, payer?.retirementAge ?? k.startAge + 1);
         c.rerender();
       } }),
-    stops === 'work' ? null : numberField({ label: 'Until (not including)', unit: 'age', min: 0, max: 120, step: 1, value: k.endAge, errorPath: `${pre}.endAge`, help: stops === 'age' ? 'Payments also stop when the payer stops work, if that comes first.' : 'Payments carry on after the payer stops work, until this age.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? 0) }),
+    stops === 'work' || outside ? null : numberField({ label: 'Until (not including)', unit: 'age', min: 0, max: 120, step: 1, value: k.endAge, errorPath: `${pre}.endAge`, help: stops === 'age' ? 'Payments also stop when the payer stops work, if that comes first.' : 'Payments carry on after the payer stops work, until this age.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? 0) }),
   ].filter((x): x is HTMLElement => x !== null);
   if (!isPct) fields.push(checkboxField({ label: 'Rises with inflation', checked: k.escalatesWithInflation, onChange: (v) => setS(c, `${pre}.escalatesWithInflation`, v) }));
   return fields;

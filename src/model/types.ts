@@ -50,6 +50,12 @@ export interface Contribution {
    * 'ageEvenAfterWork': at endAge, carrying on after work stops (paid from savings).
    */
   stopsWith?: 'work' | 'age' | 'ageEvenAfterWork';
+  /**
+   * Lump sums only. 'pay' (default): paid from take-home pay, or drawn from accounts if pay
+   * does not cover it. 'external': money from outside the plan (gift, inheritance, ...), so it
+   * reduces no income or account. Allowances and caps still apply.
+   */
+  source?: 'pay' | 'external';
 }
 // Meaning for pension accounts: `amount` is the GROSS amount reaching the pot (including tax relief).
 // For ISA/LISA/GIA/cash: `amount` is the post-tax amount paid in (for LISA the 25% bonus is added on top).
