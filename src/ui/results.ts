@@ -3,7 +3,7 @@ import type { Store } from './store';
 import { h, downloadText, uid } from './dom';
 import { formatMoney, formatPct } from './format';
 import { fanChart, barChart, stackedBars, percentLine, destroyCharts } from './charts';
-import { keyFacts, verdictBlock } from './verdict';
+import { costsOnTop, keyFacts, verdictBlock, whatMustBePaid } from './verdict';
 import { cumulativeDepletion } from './longevity';
 import { whatIfPanel } from './whatIf';
 import { surplusDescription } from './scenarioTabs';
@@ -138,6 +138,7 @@ export function renderResults(c: ResultsCtx): HTMLElement {
   const at = (xs: number[]) => xs[xs.length - 1] ?? 0;
   const target = s.sim.targetSuccessRate;
   const stale = st.status === 'running' || st.status === 'queued';
+  const extra = costsOnTop(s);
 
   const toggleId = 'real-toggle';
   const toggle = h('span', { class: 'toggle' },
@@ -161,7 +162,7 @@ export function renderResults(c: ResultsCtx): HTMLElement {
   const runOut = cumulativeDepletion(r);
   const dep = chartBox('Chance the money has run out, by age', 'chart-depletion', r.depletionAgeHistogram.length === 0
     ? 'No simulated run ran out of money.'
-    : `Share of the ${r.runs.toLocaleString('en-GB')} simulated futures that could no longer pay for planned spending by each age. The value at ${s.sim.horizonAge - 1} is the overall failure rate (${formatPct(1 - r.successRate)}).`);
+    : `Share of the ${r.runs.toLocaleString('en-GB')} simulated futures that could no longer pay for ${whatMustBePaid(s)} by each age. The value at ${s.sim.horizonAge - 1} is the overall failure rate (${formatPct(1 - r.successRate)}).`);
   const inc = chartBox('Where the money comes from', 'chart-income', 'Average income and withdrawals per year, in today’s money, with withdrawals net of tax. Each year averages only the runs that still met spending in full, so the bars show what a funded year looks like; the dashed line shows how many runs that is.');
   const tax = chartBox('Tax paid by age', 'chart-tax', 'Average income tax, NI and CGT per year in today’s money, over runs that still met spending in full that year.');
 
@@ -170,7 +171,7 @@ export function renderResults(c: ResultsCtx): HTMLElement {
     h('h3', {}, `Max sustainable spend at ${Math.round(target * 100)}% success`),
     maxSpend
       ? h('div', {}, h('p', { class: 'big' }, `${formatMoney(maxSpend.annualSpendReal)} a year`),
-        h('p', { class: 'muted' }, `Your plan scaled to ${formatPct(maxSpend.multiplier)} in every phase, spent as a fixed amount rising with inflation (whatever strategy you chose).`),
+        h('p', { class: 'muted' }, `Living costs only${extra ? `: your ${extra} are paid on top` : ''}. ${s.spending.length > 1 ? `This is your spending now, with every phase of your plan scaled to ${formatPct(maxSpend.multiplier)}` : `That is ${formatPct(maxSpend.multiplier)} of your planned spending`}, spent as a fixed amount rising with inflation (whatever strategy you chose).`),
         ...maxSpend.warnings.map((w) => h('p', { class: 'warning' }, w)))
       : h('p', { class: 'muted' }, stale ? 'Waiting for the current run…' : st.status === 'done' && st.runError ? `Could not work this out: ${st.runError}` : st.status === 'done' ? 'Working it out (this re-runs the simulation several times)…' : '—'));
 
@@ -193,9 +194,9 @@ export function renderResults(c: ResultsCtx): HTMLElement {
     h('div', { class: 'stats' },
       maxCard,
       h('div', { class: 'card stat' }, h('h3', {}, `Portfolio at age ${s.sim.horizonAge}`), h('p', { class: 'big' }, formatMoney(at(portfolioBands.p50))),
-        h('p', { class: 'muted' }, `Typical (median) outcome, ${realMode ? 'today’s money' : 'nominal'}. ${at(portfolioBands.p5) < 1 ? 'At least 1 run in 20 has run out by then' : `1 run in 20 ends below ${formatMoney(at(portfolioBands.p5))}`}; 1 in 20 ends above ${formatMoney(at(portfolioBands.p95))}.`)),
+        h('p', { class: 'muted' }, `Savings and investments (not property), typical (median) outcome, ${realMode ? 'today’s money' : 'nominal'}. ${at(portfolioBands.p5) < 1 ? 'At least 1 run in 20 has run out by then' : `1 run in 20 ends below ${formatMoney(at(portfolioBands.p5))}`}; 1 in 20 ends above ${formatMoney(at(portfolioBands.p95))}.`)),
       h('div', { class: 'card stat' }, h('h3', {}, 'Lifetime tax paid'), h('p', { class: 'big' }, formatMoney(r.taxPaidTotal.median)),
-        h('p', { class: 'muted' }, `Median, today’s money. 10th–90th percentile: ${formatMoney(r.taxPaidTotal.p10)} – ${formatMoney(r.taxPaidTotal.p90)}.`))),
+        h('p', { class: 'muted' }, `Income tax, NI and CGT for the whole plan. Median, today’s money. 10th–90th percentile: ${formatMoney(r.taxPaidTotal.p10)} – ${formatMoney(r.taxPaidTotal.p90)}.`))),
     r.warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Warnings'), h('ul', { class: 'warning-list' }, ...r.warnings.map((w) => h('li', {}, w)))) : null,
     fan.el, hasProperty ? nw.el : null, dep.el, inc.el, tax.el,
     h('section', { class: 'panel-section' },

@@ -182,7 +182,7 @@ function personFields(c: TabCtx, p: Person, i: number): Node[] {
     textField({ label: 'Date of birth', type: 'date', value: p.dateOfBirth, errorPath: `${pre}.dateOfBirth`, onChange: (v) => setS(c, `${pre}.dateOfBirth`, v) }),
     numberField({ label: 'Salary (gross, per year)', unit: 'gbp', min: 0, step: 100, value: p.salary, errorPath: `${pre}.salary`, help: 'Gross annual employment income in today’s money. Set 0 if not working.', onChange: (v) => setS(c, `${pre}.salary`, v ?? 0) }),
     numberField({ label: 'Salary growth above inflation', unit: 'pct', step: 0.001, value: p.salaryGrowthRealPct, errorPath: `${pre}.salaryGrowthRealPct`, help: 'Annual pay rise above inflation, e.g. 1%.', onChange: (v) => setS(c, `${pre}.salaryGrowthRealPct`, v ?? 0) }),
-    numberField({ label: 'Stops work at', unit: 'age', min: 0, max: 120, step: 1, value: p.retirementAge, errorPath: `${pre}.retirementAge`, help: 'Salary and contributions stop at this age. For person 1 this is also when retirement spending strategies begin.', onChange: (v) => setS(c, `${pre}.retirementAge`, v ?? 0) }),
+    numberField({ label: 'Stops work at', unit: 'age', min: 0, max: 120, step: 1, value: p.retirementAge, errorPath: `${pre}.retirementAge`, help: 'Salary stops at this age, and so do contributions unless you set them to carry on (Contributions tab). For person 1 this is also when the retirement withdrawal strategy begins.', onChange: (v) => setS(c, `${pre}.retirementAge`, v ?? 0) }),
     numberField({ label: 'NI qualifying years so far', unit: 'years', min: 0, max: 60, step: 1, value: p.niQualifyingYears, errorPath: `${pre}.niQualifyingYears`, help: 'From your State Pension forecast on gov.uk. Each future year before State Pension age adds one if you earn at least the lower earnings limit, or get NI credits (see below).', onChange: (v) => setS(c, `${pre}.niQualifyingYears`, v ?? 0) }),
     numberField({ label: 'NI credits or voluntary NI until', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: p.niCreditsUntilAge, placeholder: 'none', errorPath: `${pre}.niCreditsUntilAge`,
       help: 'A future year counts towards the State Pension only if your salary reaches the lower earnings limit. Enter an age here if you will get NI credits until then without earning (e.g. Child Benefit for a child under 12, Carer’s Allowance, Universal Credit) or plan to pay voluntary NI. The cost of voluntary NI is not modelled.',
@@ -344,7 +344,7 @@ export function renderAccounts(c: TabCtx): HTMLElement {
   };
   return list(c, {
     title: 'Accounts', path: 'accounts', items: s.accounts,
-    intro: 'At least one cash account is needed: any surplus income is paid into the first one.',
+    intro: 'At least one cash account is needed. Spare income is kept in the first one unless you choose otherwise in Spending & Strategy.',
     heading: (a) => `${a.name || ACCOUNT_LABEL[a.type]} · ${SHORT_LABEL[a.type]}`,
     body: (a, i) => accountFields(c, a, i),
     onRemove: (i) => {
@@ -440,7 +440,7 @@ function mortgagePaymentNote(m: Mortgage, id: string): HTMLElement {
   return h('p', { id, class: 'full mortgage-payment', 'aria-live': 'polite' },
     h('strong', {}, `${kind}: ${formatMoney(pay.now)}`), over,
     fixed ? `, then about ${formatMoney(pay.afterFix ?? 0)} a month at ${formatPct(m.reversionRate)} once the fix ends` : '',
-    '. ', h('span', { class: 'muted' }, 'Worked out from the balance, rates and term; check it against your lender’s figure.'));
+    '. ', h('span', { class: 'muted' }, 'Worked out from the balance, rates and term; check it against your lender’s figure. Paid on top of your spending plan.'));
 }
 
 function propertyFields(c: TabCtx, p: Property, i: number): Node[] {
@@ -518,7 +518,7 @@ function strategyFields(c: TabCtx, st: WithdrawalStrategy): Node[] {
   const set = (k: string, v: number | null) => setS(c, `strategy.${k}`, v ?? 0);
   switch (st.kind) {
     case 'fixedReal': return [h('p', { class: 'muted full' }, 'Spend exactly the plan above every year, rising with inflation. If the money runs out, the plan fails.')];
-    case 'percentOfPortfolio': return [numberField({ label: 'Withdraw each year', unit: 'pct', min: 0, max: 1, step: 0.001, value: st.pct, errorPath: 'strategy.pct', help: 'Share of the start-of-year portfolio spent each year in retirement. Spending varies with markets.', onChange: (v) => set('pct', v) })];
+    case 'percentOfPortfolio': return [numberField({ label: 'Withdraw each year', unit: 'pct', min: 0, max: 1, step: 0.001, value: st.pct, errorPath: 'strategy.pct', help: 'Share of the start-of-year portfolio spent on living costs each year in retirement; mortgage and property costs are paid on top. Spending varies with markets.', onChange: (v) => set('pct', v) })];
     case 'guardrails': return [
       numberField({ label: 'Initial withdrawal rate', unit: 'pct', min: 0, max: 1, step: 0.001, value: st.initialPct, errorPath: 'strategy.initialPct', help: 'First retirement year: this share of the portfolio. Later years: last year’s amount plus inflation, unless a guardrail is hit.', onChange: (v) => set('initialPct', v) }),
       numberField({ label: 'Upper guardrail', unit: 'pct', min: 0, max: 1, step: 0.01, value: st.upperGuard, errorPath: 'strategy.upperGuard', help: 'Cut spending if the withdrawal rate rises this far above the initial rate (e.g. 20% → above 4.8%).', onChange: (v) => set('upperGuard', v) }),
@@ -562,7 +562,7 @@ export function renderSpending(c: TabCtx): HTMLElement {
       heading: (ph, i) => (i === 0 ? 'From now' : `From age ${ph.fromAge}`),
       body: (ph, i) => [
         numberField({ label: 'From age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: ph.fromAge, errorPath: `spending[${i}].fromAge`, onChange: (v) => setS(c, `spending[${i}].fromAge`, v ?? 0) }),
-        numberField({ label: 'Spending per year', unit: 'gbp', min: 0, step: 500, value: ph.annualSpend, errorPath: `spending[${i}].annualSpend`, onChange: (v) => setS(c, `spending[${i}].annualSpend`, v ?? 0) }),
+        numberField({ label: 'Spending per year', unit: 'gbp', min: 0, step: 500, value: ph.annualSpend, errorPath: `spending[${i}].annualSpend`, help: 'Living costs in today’s money. Leave out mortgage payments and property running costs: they are entered under Property and paid on top.', onChange: (v) => setS(c, `spending[${i}].annualSpend`, v ?? 0) }),
       ],
       canRemove: () => s.spending.length > 1,
       onAdd: () => { const last = s.spending[s.spending.length - 1]; setS(c, `spending[${s.spending.length}]`, { fromAge: (last?.fromAge ?? 60) + 10, annualSpend: last?.annualSpend ?? 30000 }); },
@@ -601,6 +601,6 @@ export function renderSpending(c: TabCtx): HTMLElement {
           help: 'Annual: all cash flows on 6 April each year, then a year of returns (fast, slightly conservative). Monthly: flows and returns every month, tax settled at the end of each tax year (about 5x slower).',
           options: [{ value: '1', label: 'Annual (faster)' }, { value: '12', label: 'Monthly (more precise timing)' }],
           onChange: (v) => setS(c, 'sim.stepsPerYear', v === '12' ? 12 : 1) }),
-        numberField({ label: 'Target success rate', unit: 'pct', min: 0.01, max: 0.99, step: 0.01, value: s.sim.targetSuccessRate, errorPath: 'sim.targetSuccessRate', help: 'Used for “max sustainable spend”.', onChange: (v) => setS(c, 'sim.targetSuccessRate', v ?? 0) }))));
+        numberField({ label: 'Target success rate', unit: 'pct', min: 0.01, max: 0.99, step: 0.01, value: s.sim.targetSuccessRate, errorPath: 'sim.targetSuccessRate', help: 'The chance of the money lasting that you are aiming for. Used for max sustainable spend, the earliest stop-work age and “Money lasts”.', onChange: (v) => setS(c, 'sim.targetSuccessRate', v ?? 0) }))));
 }
 

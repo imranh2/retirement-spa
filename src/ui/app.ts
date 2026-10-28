@@ -8,6 +8,7 @@ import { renderOverview, renderPeople, renderAccounts, renderContributions, rend
 import { renderConfigEditor, refreshModifiedDots } from './configEditor';
 import { renderResults, progressBar } from './results';
 import { successBand } from './successBand';
+import { costsOnTop } from './verdict';
 
 /** Mount the single-page app into #app. */
 export function startApp(root: HTMLElement): Store {
@@ -97,11 +98,11 @@ export function startApp(root: HTMLElement): Store {
           h('span', { class: 'band-label' }, band.label))
         : h('p', { class: 'muted sum-empty' }, s.status === 'invalid' ? 'Fix the problems below to see results.' : 'Results will appear here once the simulation has run.'),
       r ? h('dl', { class: 'sum-stats' },
-        h('div', {}, h('dt', {}, `Max spend at ${Math.round(s.scenario.sim.targetSuccessRate * 100)}% success`),
+        h('div', {}, h('dt', { title: 'The most you could spend a year on living costs and still hit your target success rate. Mortgage payments and property running costs are paid on top.' }, `Max spend at ${Math.round(s.scenario.sim.targetSuccessRate * 100)}% success${costsOnTop(s.scenario) ? ' (excl. home costs)' : ''}`),
           h('dd', {}, s.maxSpend ? [`${formatMoney(s.maxSpend.annualSpendReal)}/yr`, deltaTag(delta.maxSpend, formatMoney, MIN_GBP)] : h('span', { class: 'muted' }, s.maxSpendProgress ? `working… ${s.maxSpendProgress.completed}/${s.maxSpendProgress.total}` : '—'))),
         working ? h('div', {}, h('dt', {}, 'Earliest stop-work age'), h('dd', {}, retireText ?? h('span', { class: 'muted' }, s.status === 'done' ? 'working…' : '—'))) : null,
-        h('div', {}, h('dt', {}, `Median portfolio at ${horizon}`), h('dd', {}, lastMedian !== undefined ? formatMoneyCompact(lastMedian) : '—')),
-        h('div', {}, h('dt', {}, 'Lifetime tax (median)'), h('dd', {}, formatMoney(r.taxPaidTotal.median)))) : null,
+        h('div', {}, h('dt', { title: 'Savings and investments, not property' }, `Median portfolio at ${horizon}`), h('dd', {}, lastMedian !== undefined ? formatMoneyCompact(lastMedian) : '—')),
+        h('div', {}, h('dt', { title: 'Income tax, NI and CGT over the whole plan' }, 'Lifetime tax and NI (median)'), h('dd', {}, formatMoney(r.taxPaidTotal.median)))) : null,
       problems > 0 ? h('a', { href: '#/overview', class: 'sum-problems' }, `⚠ ${problems} problem${problems === 1 ? '' : 's'} to fix`) : null,
       progressBar(store),
       r ? h('p', { class: 'muted small sum-note' }, 'Today’s money. Updates automatically as you edit.') : null,

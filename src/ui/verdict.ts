@@ -5,6 +5,27 @@ import { h } from './dom';
 import { formatMoney, formatPct } from './format';
 import { successBand } from './successBand';
 
+/**
+ * What the plan pays on top of the spending plan, e.g. "mortgage payments and home running
+ * costs", or null when there is nothing. Max spend and the spending sliders exclude these.
+ */
+export function costsOnTop(s: Scenario): string | null {
+  const parts = costsOnTopList(s);
+  return parts.length ? parts.join(' and ') : null;
+}
+
+function costsOnTopList(s: Scenario): string[] {
+  const mortgage = s.properties.some((p) => (p.mortgage?.balance ?? 0) > 0);
+  const running = s.properties.some((p) => p.runningCostsAnnual > 0 || (p.runningCostsPctOfValue ?? 0) > 0);
+  return [mortgage ? 'mortgage payments' : null, running ? 'property running costs' : null].filter((x): x is string => x !== null);
+}
+
+/** Everything a year must pay for a future to count as a success, e.g. "spending, mortgage payments and tax". */
+export function whatMustBePaid(s: Scenario): string {
+  const items = ['spending', ...costsOnTopList(s), 'tax'];
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
 /** Below this relative gap between planned and max spend, say the plan is "about right". */
 const ON_TARGET = 0.02;
 
@@ -20,11 +41,12 @@ export function verdictText(r: SimulationResult, s: Scenario, maxSpend?: MaxSpen
   const target = `${Math.round(maxSpend.targetSuccessRate * 100)}%`;
   const planned = maxSpend.annualSpendReal / maxSpend.multiplier;
   const gap = maxSpend.multiplier - 1;
-  const amount = formatMoney(maxSpend.annualSpendReal);
+  const extra = costsOnTop(s);
+  const amount = `${formatMoney(maxSpend.annualSpendReal)} a year${extra ? ` (plus your ${extra})` : ''}`;
   if (Math.abs(gap) < ON_TARGET) return { lead, spend: `Your planned spending (${formatMoney(planned)} a year) is about right for a ${target} chance.` };
   return gap < 0
-    ? { lead, spend: `For a ${target} chance, spend about ${amount} a year: ${formatPct(-gap)} less than the ${formatMoney(planned)} you plan.` }
-    : { lead, spend: `For a ${target} chance you could spend up to ${amount} a year: ${formatPct(gap)} more than the ${formatMoney(planned)} you plan.` };
+    ? { lead, spend: `For a ${target} chance, spend about ${amount}: ${formatPct(-gap)} less than the ${formatMoney(planned)} you plan.` }
+    : { lead, spend: `For a ${target} chance you could spend up to ${amount}: ${formatPct(gap)} more than the ${formatMoney(planned)} you plan.` };
 }
 
 /** Plain-English answer for the earliest stop-work search, or null when there is nothing to say. */
@@ -59,7 +81,7 @@ export function keyFacts(r: SimulationResult, s: Scenario, retireAge: RetireAgeV
     fact(`Money lasts (${Math.round(target * 100)}% of futures)`, `to age ${lastsLabel(sure)}`, sure.beyond ? `The money outlasts the plan in at least ${Math.round(target * 100)}% of futures.` : `In ${Math.round((1 - target) * 100)}% of futures it runs out before age ${sure.age + 1}.`),
     fact('Money lasts (typical future)', `to age ${lastsLabel(typical)}`, typical.beyond ? 'Half of futures still have money at the end of the plan.' : 'Half of futures have run out by this age.'),
     retire !== null || (retirePending && s.people[0] && s.people[0].retirementAge > (r.ages[0] ?? 0))
-      ? fact(s.people.length > 1 ? `Earliest stop-work age (${who})` : 'Earliest stop-work age', retire ?? 'working it out…', `With planned spending and a ${Math.round(target * 100)}% chance the money lasts. Explore it with the What if? sliders on Results.`)
+      ? fact(s.people.length > 1 ? `Earliest stop-work age (${who})` : 'Earliest stop-work age', retire ?? 'working it out…', `With planned spending and a ${Math.round(target * 100)}% chance the money lasts.${s.people.length > 1 ? ' The other person’s stop-work age moves by the same number of years.' : ''} Explore it with the What if? sliders on Results.`)
       : null);
 }
 
@@ -77,5 +99,5 @@ export function verdictBlock(r: SimulationResult, s: Scenario, maxSpend: MaxSpen
       s.strategy.kind !== 'fixedReal'
         ? h('p', { class: 'small' }, 'With your withdrawal strategy, spending falls when investments do, so a future only counts as running out if it cannot cover fixed costs. Check “Where the money comes from” for how low spending gets.')
         : null,
-      h('p', { class: 'muted small' }, `Based on ${r.runs.toLocaleString('en-GB')} simulated futures. All amounts are in today’s money.`)));
+      h('p', { class: 'muted small' }, `A future counts as a success if ${whatMustBePaid(s)} are paid in full every year until age ${s.sim.horizonAge}. Based on ${r.runs.toLocaleString('en-GB')} simulated futures. All amounts are in today’s money.`)));
 }

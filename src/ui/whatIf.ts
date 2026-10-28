@@ -6,6 +6,7 @@ import { h, uid } from './dom';
 import { formatMoney, formatPct } from './format';
 import { lastsLabel, moneyLastsUntil } from './longevity';
 import { successBand } from './successBand';
+import { costsOnTop } from './verdict';
 
 /** Debounce for slider moves before a quick check is sent to the worker. */
 const WHATIF_DEBOUNCE_MS = 200;
@@ -48,7 +49,9 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
   const retireAt = working ? Math.min(Math.max(ui.retireAt ?? planned, ageNow), latest) : undefined;
   const target = s.sim.targetSuccessRate;
   const who = s.people[0]?.name || 'person 1';
-  const firstSpend = s.spending[0]?.annualSpend ?? 0;
+  // The phase in force now (the last one that has started), as max spend uses.
+  const spendNow = s.spending.reduce((amount, p) => (p.fromAge <= ageNow ? p.annualSpend : amount), s.spending[0]?.annualSpend ?? 0);
+  const extra = costsOnTop(s);
 
   const out = h('div', { class: 'whatif-out', 'aria-live': 'polite' });
   const changed = () => (retireAt !== undefined && (ui.retireAt ?? planned) !== planned) || ui.spendPct !== FULL_PCT;
@@ -98,7 +101,7 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
 
   const spendId = uid('whatif-spend');
   const spendValue = h('output', { for: spendId, class: 'whatif-value' });
-  const setSpendLabel = (pct: number) => { spendValue.textContent = `${formatMoney(firstSpend * pct / FULL_PCT)} a year${pct === FULL_PCT ? ' (your plan)' : ` (${pct}% of plan${s.spending.length > 1 ? ', every phase' : ''})`}`; };
+  const setSpendLabel = (pct: number) => { spendValue.textContent = `${formatMoney(spendNow * pct / FULL_PCT)} a year${pct === FULL_PCT ? ' (your plan)' : ` (${pct}% of plan${s.spending.length > 1 ? ', every phase' : ''})`}`; };
   setSpendLabel(ui.spendPct);
   const spendRow = h('div', { class: 'whatif-row' },
     h('label', { for: spendId }, 'Spending'), spendValue,
@@ -120,8 +123,8 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
   const panel = h('section', { class: 'panel-section whatif' },
     h('h3', {}, 'What if?'),
     h('p', { class: 'muted' }, working
-      ? `Try stopping work earlier or later, or spending more or less, and see how long the money lasts. ${s.people.length > 1 ? 'A partner who is still working moves their stop-work age by the same number of years. ' : ''}Nothing changes until you choose “Use these in my plan”.`
-      : 'Try spending more or less and see how long the money lasts. Nothing changes until you choose “Use these in my plan”.'),
+      ? `Try stopping work earlier or later, or spending more or less, and see how long the money lasts. ${s.people.length > 1 ? 'A partner who is still working moves their stop-work age by the same number of years. ' : ''}${extra ? `The spending slider scales your spending plan only; your ${extra} stay as they are. ` : ''}Nothing changes until you choose “Use these in my plan”.`
+      : `Try spending more or less and see how long the money lasts. ${extra ? `The slider scales your spending plan only; your ${extra} stay as they are. ` : ''}Nothing changes until you choose “Use these in my plan”.`),
     h('div', { class: 'whatif-grid' }, h('div', { class: 'whatif-controls' }, retireRow, spendRow, h('p', { class: 'row-btns' }, apply, reset)), out));
   schedule();
   return panel;
