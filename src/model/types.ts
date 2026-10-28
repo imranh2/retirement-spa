@@ -16,6 +16,7 @@ export interface Account {
   balance: number;
   allocation: AssetAllocation;
   annualFeePct: number;              // e.g. 0.004
+  annualFeeFixed?: number;           // flat platform fee, £ a year in today's money (rises with inflation)
   giaCostBasis?: number;             // GIA only; defaults to balance. Used for CGT
   pensionAccessAge?: number;         // DC only; default from config.pensionAccess + DOB
   taxFreeCashTaken?: number;         // DC only; counts against the Lump Sum Allowance
@@ -67,6 +68,7 @@ export interface Property {
   mortgage?: Mortgage;
   rentalIncomeAnnual?: number;       // today's money; rented out; taxable non-savings income, split equally between people
   runningCostsAnnual: number;        // today's money
+  runningCostsPctOfValue?: number;   // extra yearly cost as a fraction of the home's current value
   downsize?: { atAge: number; newValue: number; releaseToAccountId: string }; // main residence only (v1)
 }
 
@@ -102,6 +104,14 @@ export interface SimSettings {
   targetSuccessRate: number;         // default 0.9, used by the max-sustainable-spend search
 }
 
+/**
+ * What happens to income left over after spending, tax, mortgage and contributions:
+ * kept in the first cash account (default), invested in a cash account, GIA or ISA
+ * (ISA within the owner's remaining allowance; the rest goes to their GIA, else cash),
+ * or treated as spent.
+ */
+export type SurplusRule = { kind: 'cash' } | { kind: 'invest'; accountId: string } | { kind: 'spend' };
+
 export interface Scenario {
   people: Person[];                  // 1 or 2; person 0 is the "primary" whose age is the simulation clock
   accounts: Account[];               // validation: at least one 'cash' account must exist
@@ -111,6 +121,7 @@ export interface Scenario {
   spending: SpendingPhase[];         // sorted by fromAge; first phase must start at or before person 0's current age
   strategy: WithdrawalStrategy;
   withdrawalOrder: AccountType[];    // e.g. ['cash','gia','isa','lisa','dcPension']
+  surplus?: SurplusRule;             // default { kind: 'cash' }
   sim: SimSettings;
 }
 
@@ -124,6 +135,8 @@ export interface CentralCaseRow {
   drawCash: number; drawGia: number; drawIsa: number; drawLisa: number; drawPension: number;
   spending: number; mortgagePayments: number; propertyCosts: number;
   taxPaid: number; niPaid: number;
+  savedFromPay?: number;             // contributions paid from take-home pay (ISA, GIA, cash, personal pension)
+  spareIncome?: number;              // income left over after everything; where it goes depends on Scenario.surplus
   portfolioEnd: number; propertyEquityEnd: number; mortgageBalanceEnd: number;
 }
 

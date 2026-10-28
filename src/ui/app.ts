@@ -85,6 +85,9 @@ export function startApp(root: HTMLElement): Store {
     const MIN_GBP = 50;
     const horizon = s.scenario.sim.horizonAge;
     const lastMedian = r ? r.portfolioReal.p50[r.portfolioReal.p50.length - 1] : undefined;
+    // Only meaningful while person 1 is still working; "64 (3 years earlier…)" is shortened to the age.
+    const working = r !== undefined && (s.scenario.people[0]?.retirementAge ?? 0) > (r.ages[0] ?? 0);
+    const retireText = s.retireAge?.status === 'found' ? String(s.retireAge.age) : s.retireAge?.status === 'now' ? 'Now' : s.retireAge?.status === 'notReachable' ? `Not by ${s.retireAge.latestTried}` : null;
     const problems = s.scenarioErrors.length + s.errors.filter((e) => e.severity !== 'warning').length;
     const parts: (Node | null)[] = [
       r && band
@@ -96,6 +99,7 @@ export function startApp(root: HTMLElement): Store {
       r ? h('dl', { class: 'sum-stats' },
         h('div', {}, h('dt', {}, `Max spend at ${Math.round(s.scenario.sim.targetSuccessRate * 100)}% success`),
           h('dd', {}, s.maxSpend ? [`${formatMoney(s.maxSpend.annualSpendReal)}/yr`, deltaTag(delta.maxSpend, formatMoney, MIN_GBP)] : h('span', { class: 'muted' }, s.maxSpendProgress ? `working… ${s.maxSpendProgress.completed}/${s.maxSpendProgress.total}` : '—'))),
+        working ? h('div', {}, h('dt', {}, 'Earliest stop-work age'), h('dd', {}, retireText ?? h('span', { class: 'muted' }, s.status === 'done' ? 'working…' : '—'))) : null,
         h('div', {}, h('dt', {}, `Median portfolio at ${horizon}`), h('dd', {}, lastMedian !== undefined ? formatMoneyCompact(lastMedian) : '—')),
         h('div', {}, h('dt', {}, 'Lifetime tax (median)'), h('dd', {}, formatMoney(r.taxPaidTotal.median)))) : null,
       problems > 0 ? h('a', { href: '#/overview', class: 'sum-problems' }, `⚠ ${problems} problem${problems === 1 ? '' : 's'} to fix`) : null,
@@ -149,7 +153,7 @@ export function startApp(root: HTMLElement): Store {
     if (s.notices !== last.notices) renderNotices(s);
     showErrors(panel, allIssues(s));
     if (tab === 'rules') refreshModifiedDots(panel, store);
-    const resultsChanged = s.results !== last.results || s.maxSpend !== last.maxSpend || s.status !== last.status;
+    const resultsChanged = s.results !== last.results || s.maxSpend !== last.maxSpend || s.retireAge !== last.retireAge || s.status !== last.status;
     if (resultsChanged && (tab === 'results' || tab === 'overview')) rerender();
     last = s;
   });

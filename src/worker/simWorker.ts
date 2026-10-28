@@ -12,6 +12,7 @@ interface WorkerScope {
 const ctx = self as unknown as WorkerScope;
 const cancelled = new Set<number>();
 let latest = 0;
+let latestRetire = 0;
 
 function post(msg: WorkerResponse): void {
   ctx.postMessage(msg);
@@ -43,21 +44,32 @@ async function run(req: Extract<WorkerRequest, { type: 'run' }>): Promise<void> 
       await yieldToEvents();
       if (isCancelled(requestId)) { post({ type: 'cancelled', requestId }); return; }
       const n = steps.next();
-      if (n.done) { post({ type: 'maxSpend', requestId, value: { ...n.value.value, warnings: n.value.warnings } }); break; }
+      if (n.done) { post({ type: 'maxSpend', requestId, value: { ...n.value.value, warnings: n.value.warnings } }); return; }
       post({ type: 'maxSpendProgress', requestId, completed: n.value, total: MAX_SPEND_STEPS });
-    }
-    // Then the earliest stop-work age at the target (a handful of simulations).
-    const retire = earliestRetirementAgeSteps(scenario, config);
-    for (;;) {
-      await yieldToEvents();
-      if (isCancelled(requestId)) { post({ type: 'cancelled', requestId }); return; }
-      const n = retire.next();
-      if (n.done) { post({ type: 'retireAge', requestId, value: n.value }); return; }
     }
   } catch (e) {
     post({ type: 'error', requestId, message: e instanceof Error ? e.message : String(e) });
   } finally {
     cancelled.delete(requestId);
+  }
+}
+
+/**
+ * Earliest stop-work age search. It runs in its own worker instance alongside the main run,
+ * and stops between simulations once a newer search has been requested.
+ */
+async function retire(req: Extract<WorkerRequest, { type: 'retire' }>): Promise<void> {
+  const { requestId, scenario, config } = req;
+  try {
+    const steps = earliestRetirementAgeSteps(scenario, config);
+    for (;;) {
+      await yieldToEvents();
+      if (requestId !== latestRetire) return;
+      const n = steps.next();
+      if (n.done) { post({ type: 'retireAge', requestId, value: n.value }); return; }
+    }
+  } catch (e) {
+    post({ type: 'error', requestId, message: e instanceof Error ? e.message : String(e) });
   }
 }
 
@@ -70,6 +82,9 @@ ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
     const QUICK_RUNS = 1000;
     try { post({ type: 'quickResult', requestId: msg.requestId, result: quickCheck(msg.scenario, msg.config, QUICK_RUNS) }); }
     catch (err) { post({ type: 'error', requestId: msg.requestId, message: err instanceof Error ? err.message : String(err) }); }
+  } else if (msg.type === 'retire') {
+    latestRetire = msg.requestId;
+    void retire(msg);
   } else if (msg.type === 'run') {
     latest = msg.requestId;
     void run(msg);

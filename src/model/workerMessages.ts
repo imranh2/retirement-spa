@@ -7,6 +7,7 @@ export type WorkerRequest =
   | { type: 'run'; requestId: number; scenario: Scenario; config: ConfigBundle }
   | { type: 'cancel'; requestId: number }
   | { type: 'quick'; requestId: number; scenario: Scenario; config: ConfigBundle }
+  | { type: 'retire'; requestId: number; scenario: Scenario; config: ConfigBundle }
   | { type: 'ping' };
 
 export interface MaxSpendValue { multiplier: number; annualSpendReal: number; targetSuccessRate: number; warnings: string[] }

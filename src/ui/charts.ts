@@ -1,4 +1,4 @@
-import type { Chart as ChartType, ChartConfiguration } from 'chart.js';
+import type { Chart as ChartType, ChartConfiguration, TooltipItem } from 'chart.js';
 import type { PercentileBands } from '../model/types';
 import { formatMoney, formatMoneyCompact } from './format';
 
@@ -86,7 +86,15 @@ export function fanChart(canvas: HTMLCanvasElement, ages: number[], b: Percentil
     },
     options: (() => {
       const o = baseOptions(yTitle);
-      return { ...o, plugins: { ...o?.plugins, legend: { display: false } }, scales: { ...o?.scales, y: { ...o?.scales?.y, min: 0, max: yMax } } };
+      // The tooltip lists the bands from highest to lowest (they are drawn in a different order).
+      // At the first point every band equals today's value, so show it once.
+      const tooltip = {
+        ...o?.plugins?.tooltip,
+        itemSort: (a: TooltipItem<'line'>, b: TooltipItem<'line'>) => Number(b.parsed.y) - Number(a.parsed.y),
+        filter: (item: TooltipItem<'line'>) => item.dataIndex !== 0 || item.dataset.label === 'Median',
+        callbacks: { label: (ctx: TooltipItem<'line'>) => `${ctx.dataIndex === 0 ? 'Today' : ctx.dataset.label ?? ''}: ${formatMoney(Number(ctx.parsed.y))}` },
+      };
+      return { ...o, plugins: { ...o?.plugins, legend: { display: false }, tooltip }, scales: { ...o?.scales, y: { ...o?.scales?.y, min: 0, max: yMax } } };
     })(),
   });
 }

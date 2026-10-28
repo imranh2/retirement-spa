@@ -55,6 +55,8 @@ export interface ContributionPlan {
   lisaIneligible: boolean;
   /** LISA accounts (indexes) opened by their first contribution this year. */
   lisaOpened: number[];
+  /** Per person: ISA allowance left after this year's ISA and LISA contributions. */
+  isaRoomLeft: number[];
 }
 
 /**
@@ -90,6 +92,7 @@ export function planContributions(
   let isaOverflow = false;
   let lisaIneligible = false;
   const lisaOpened: number[] = [];
+  const isaRoomLeft = new Array<number>(n).fill(cfg.isa.annualAllowance);
 
   const idxById = new Map(accounts.map((a, i) => [a.id, i]));
   const firstCash = accounts.findIndex((a) => a.type === 'cash');
@@ -191,7 +194,8 @@ export function planContributions(
       fromTakeHome += take;
       sendOverflow(r.amount - take);
     }
+    isaRoomLeft[p] = isaRoom;
   }
 
-  return { credits, netPayGross, reliefAtSourceGross, fromTakeHome, pensionGross, pensionCapped, allowanceTapered, isaOverflow, lisaIneligible, lisaOpened };
+  return { credits, netPayGross, reliefAtSourceGross, fromTakeHome, pensionGross, pensionCapped, allowanceTapered, isaOverflow, lisaIneligible, lisaOpened, isaRoomLeft };
 }

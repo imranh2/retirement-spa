@@ -7,7 +7,6 @@ export interface RunHandlers {
   onResult?: (result: SimulationResult) => void;
   onMaxSpendProgress?: (completed: number, total: number) => void;
   onMaxSpend?: (value: MaxSpendValue) => void;
-  onRetireAge?: (value: RetireAgeValue) => void;
   onError?: (message: string) => void;
   onCancelled?: () => void;
 }
@@ -18,6 +17,8 @@ export interface SimRunner {
   cancel(): void;
   /** A quick what-if check on a separate worker; superseded calls resolve to null. */
   quick?(scenario: Scenario, config: ConfigBundle): Promise<QuickResult | null>;
+  /** Earliest stop-work age search on its own worker; superseded calls resolve to null. */
+  retireAge?(scenario: Scenario, config: ConfigBundle): Promise<RetireAgeValue | null>;
 }
 
 /**
@@ -38,6 +39,21 @@ export function createSimClient(): SimRunner & { ping(): Promise<boolean> } {
   let quickWorker: Worker | undefined;
   let nextQuickId = 1;
   let pendingQuick: { id: number; resolve: (r: QuickResult | null) => void } | undefined;
+  // A third worker for the earliest stop-work age search, so it runs alongside the main run.
+  let retireWorker: Worker | undefined;
+  let nextRetireId = 1;
+  let pendingRetire: { id: number; resolve: (v: RetireAgeValue | null) => void } | undefined;
+  const createRetireWorker = () => {
+    const w = new Worker(new URL('../worker/simWorker.ts', import.meta.url), { type: 'module' });
+    w.onmessage = (e: MessageEvent<WorkerResponse>) => {
+      const msg = e.data;
+      if (msg.type === 'pong' || !pendingRetire || msg.requestId !== pendingRetire.id) return;
+      const p = pendingRetire;
+      pendingRetire = undefined;
+      p.resolve(msg.type === 'retireAge' ? msg.value : null);
+    };
+    return w;
+  };
   const createQuickWorker = () => {
     const w = new Worker(new URL('../worker/simWorker.ts', import.meta.url), { type: 'module' });
     w.onmessage = (e: MessageEvent<WorkerResponse>) => {
@@ -59,8 +75,7 @@ export function createSimClient(): SimRunner & { ping(): Promise<boolean> } {
       case 'progress': handlers.onProgress?.(msg.completed, msg.total); break;
       case 'result': handlers.onResult?.(msg.result); break;
       case 'maxSpendProgress': handlers.onMaxSpendProgress?.(msg.completed, msg.total); break;
-      case 'maxSpend': handlers.onMaxSpend?.(msg.value); break;
-      case 'retireAge': active = 0; handlers.onRetireAge?.(msg.value); break;
+      case 'maxSpend': active = 0; handlers.onMaxSpend?.(msg.value); break;
       case 'error': active = 0; handlers.onError?.(msg.message); break;
       case 'cancelled': active = 0; handlers.onCancelled?.(); break;
     }
@@ -89,6 +104,15 @@ export function createSimClient(): SimRunner & { ping(): Promise<boolean> } {
       return new Promise((resolve) => {
         pendingQuick = { id, resolve };
         quickWorker?.postMessage({ type: 'quick', requestId: id, scenario, config } satisfies WorkerRequest);
+      });
+    },
+    retireAge(scenario, config) {
+      retireWorker ??= createRetireWorker();
+      const id = nextRetireId++;
+      pendingRetire?.resolve(null);
+      return new Promise((resolve) => {
+        pendingRetire = { id, resolve };
+        retireWorker?.postMessage({ type: 'retire', requestId: id, scenario, config } satisfies WorkerRequest);
       });
     },
     ping() {

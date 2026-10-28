@@ -52,6 +52,7 @@ interface Prepared {
   spEntitlementToday: number[];    // annual, today's money
   pensionAccessAge: number[];      // per account (NaN for non-DC)
   firstCash: number;
+  surplusTarget: number;            // account index for SurplusRule 'invest', else -1
   initialLsaUsed: number[];
 }
 
@@ -79,6 +80,7 @@ interface YearRecord {
   draws: ByType;
   spending: number; mortgagePayments: number; propertyCosts: number;
   incomeTax: number; ni: number; cgt: number;
+  savedFromPay: number; spareIncome: number;
   portfolioEnd: number; propertyEquityEnd: number; mortgageBalanceEnd: number;
 }
 
@@ -125,6 +127,7 @@ function prepare(scenario: Scenario, config: ConfigBundle): Prepared {
     spEntitlementToday,
     pensionAccessAge: scenario.accounts.map((a) => (a.type === 'dcPension' ? accessAgeForAccount(a, people[a.ownerIndex], config.pensionAccess) : Number.NaN)),
     firstCash: scenario.accounts.findIndex((a) => a.type === 'cash'),
+    surplusTarget: scenario.surplus?.kind === 'invest' ? scenario.accounts.findIndex((a) => scenario.surplus?.kind === 'invest' && a.id === scenario.surplus.accountId) : -1,
     initialLsaUsed: lsa,
   };
 }
@@ -138,6 +141,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
   const { people, accounts, properties } = scenario;
   const nP = people.length;
   const market = config.market;
+  const surplusRule = scenario.surplus ?? { kind: 'cash' as const };
   const monthly = scenario.sim.stepsPerYear === MONTHS_PER_YEAR;
   const returnInput = { market, historical: config.historicalReturns, model: scenario.sim.returnModel, years: T, rng: mulberry32(runSeed(scenario.sim.seed, runIndex)), deterministic };
   // Annual steps: one entry per year. Monthly steps: packed monthly rates (12 per year).
@@ -146,6 +150,9 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
   const monthlyReturns = monthly ? generateMonthlyReturnsPacked(returnInput) : new Float64Array(0);
   const mr: YearReturns = { equities: 0, bonds: 0, cash: 0, property: 0, inflation: 0 };
   const monthlyFee = accounts.map((a) => 1 - Math.pow(1 - a.annualFeePct, 1 / MONTHS_PER_YEAR));
+  /** Flat fees come out of the balance after returns, never taking it below zero. */
+  const fixedFee = accounts.map((a) => a.annualFeeFixed ?? 0);
+  const afterFixedFee = (b: number, a: number, fee: number) => (fee > 0 ? Math.max(0, b - fee) : b);
   const monthlyGrowth = properties.map((p) => ({ own: monthlyRate(p.growthRealPct), market: monthlyRate(market.property.meanReal) }));
 
   let ws: WithdrawalState = {
@@ -233,13 +240,34 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         if (y.lumpSumDue > 0) { pendingLump[pi] = y.lumpSumDue; flags.mortgageLumpSum = true; }
         mort[pi] = y.endBalance > 0 ? y.endState : null;
       }
-      propertyCosts += runningCostsNominal(p, index, downsized[pi]);
+      propertyCosts += runningCostsNominal(p, index, downsized[pi], propValue[pi]);
     });
 
     // Contributions (start of year, before returns)
     const personYears: PersonYear[] = people.map((_, i) => ({ age: ages[i], grossSalary: salary[i], mpaaTriggered: ws.mpaaTriggered[i], otherTaxableIncome: statePension[i] + taxableStreams[i] + rentShare }));
     const plan = planContributions(scenario.contributions, accounts, people, personYears, t, index, cfg, lisaOpen);
     for (const a of plan.lisaOpened) lisaOpen[a] = true;
+    // Spare income this year and where it goes (Scenario.surplus).
+    let spareIncome = 0;
+    const isaRoom = [...plan.isaRoomLeft];
+    const overflowAccount = (person: number) => {
+      const gia = accounts.findIndex((acc) => acc.type === 'gia' && acc.ownerIndex === person);
+      return gia >= 0 ? gia : prep.firstCash;
+    };
+    /** Pay `amount` of spare income into `bal` (mutated) following the surplus rule. */
+    const routeSurplus = (amount: number, bal: number[]) => {
+      if (amount <= 0) return;
+      spareIncome += amount;
+      const credit = (a: number, x: number) => { if (a >= 0 && x > 0) { bal[a] += x; creditGiaBasis(a, x); } };
+      if (surplusRule.kind === 'spend') return;
+      if (surplusRule.kind === 'cash' || prep.surplusTarget < 0) { credit(prep.firstCash, amount); return; }
+      const target = accounts[prep.surplusTarget];
+      if (target.type !== 'isa') { credit(prep.surplusTarget, amount); return; }
+      const take = Math.min(amount, Math.max(0, isaRoom[target.ownerIndex]));
+      isaRoom[target.ownerIndex] -= take;
+      credit(prep.surplusTarget, take);
+      if (amount - take > 0) { flags.isaOverflow = true; credit(overflowAccount(target.ownerIndex), amount - take); }
+    };
     if (!monthly) for (let a = 0; a < balances.length; a++) { balances[a] += plan.credits[a]; creditGiaBasis(a, plan.credits[a]); }
     flags.pensionCapped ||= plan.pensionCapped;
     flags.allowanceTapered ||= plan.allowanceTapered;
@@ -321,7 +349,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
 
     if (!monthly) {
       if (need <= 0) {
-        if (prep.firstCash >= 0) balances[prep.firstCash] += -need;
+        routeSurplus(-need, balances);
         ws = { ...ws, balances };
       } else {
         const res = executeWithdrawals(wctx, need, { ...ws, balances });
@@ -348,14 +376,16 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
           kept = keptOf(withRefund);
         }
         if (refund > 0 && prep.firstCash >= 0) {
-          ws = { ...ws, balances: ws.balances.map((b, a) => (a === prep.firstCash ? b + refund : b)) };
+          const bal = [...ws.balances];
+          routeSurplus(refund, bal);
+          ws = { ...ws, balances: bal };
           incomeTaxTotal -= refund;
         }
         for (let a = 0; a < accounts.length; a++) creditGiaBasis(a, giaIncomeRate[a] * kept(a));
       }
       // Returns on what is left, then property growth
       const yr = returns[t];
-      nextBalances = failed ? ws.balances.map(() => 0) : ws.balances.map((b, a) => b * (1 + accountReturn(accounts[a].allocation, yr, accounts[a].annualFeePct)));
+      nextBalances = failed ? ws.balances.map(() => 0) : ws.balances.map((b, a) => afterFixedFee(b * (1 + accountReturn(accounts[a].allocation, yr, accounts[a].annualFeePct)), a, fixedFee[a] * index));
       ws = { ...ws, balances: nextBalances };
       properties.forEach((p, pi) => { propValue[pi] *= 1 + propertyNominalReturn(yr, p.growthRealPct, market.property.meanReal); });
       indexEnd = index * (1 + yr.inflation);
@@ -388,7 +418,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         for (let a = 0; a < nA; a++) { bal[a] += creditM[a]; creditGiaBasis(a, creditM[a]); }
         const needM = regular + mortgageMonth + (k === 0 ? lumpSums + downsizeShortfall : 0);
         if (needM <= 0) {
-          if (prep.firstCash >= 0) bal[prep.firstCash] += -needM;
+          routeSurplus(-needM, bal);
         } else {
           const res = executeWithdrawals(deferCtx, needM, { ...ws, balances: bal });
           ws = res.state;
@@ -399,7 +429,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         }
         unpackReturn(monthlyReturns, t * MONTHS_PER_YEAR + k, mr);
         if (failed) bal.fill(0);
-        else for (let a = 0; a < nA; a++) bal[a] *= 1 + accountReturn(accounts[a].allocation, mr, monthlyFee[a]);
+        else for (let a = 0; a < nA; a++) bal[a] = afterFixedFee(bal[a] * (1 + accountReturn(accounts[a].allocation, mr, monthlyFee[a])), a, fixedFee[a] * index / MONTHS_PER_YEAR);
         for (let pi = 0; pi < properties.length; pi++) propValue[pi] *= 1 + propertyNominalReturn(mr, monthlyGrowth[pi].own, monthlyGrowth[pi].market);
         monthIndex *= 1 + mr.inflation;
         cashGrowth *= 1 + mr.cash;
@@ -432,7 +462,9 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         draws.gia = Math.max(0, draws.gia - cgt);
       } else if (bill <= 0) {
         // Less tax due than was paid monthly (investment income was over-estimated): refund to cash.
-        if (prep.firstCash >= 0) ws = { ...ws, balances: ws.balances.map((b, a) => (a === prep.firstCash ? b - bill : b)) };
+        const refundBal = [...ws.balances];
+        routeSurplus(-bill, refundBal);
+        ws = { ...ws, balances: refundBal };
         draws.dcPension = Math.max(0, draws.dcPension - pensionIncomeTax);
         draws.gia = Math.max(0, draws.gia - cgt);
       } else {
@@ -473,6 +505,8 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         incomeTax: incomeTaxTotal + extraTax,
         ni: niTotal,
         cgt,
+        savedFromPay: plan.fromTakeHome,
+        spareIncome,
         portfolioEnd: nextBalances.reduce((s, v) => s + v, 0),
         propertyEquityEnd: propValue.reduce((s, v) => s + v, 0) - mortgageBalanceEnd,
         mortgageBalanceEnd,
@@ -613,6 +647,8 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
           propertyCosts: y.propertyCosts / y.index,
           taxPaid: (y.incomeTax + y.cgt) / y.index,
           niPaid: y.ni / y.index,
+          savedFromPay: y.savedFromPay / y.index,
+          spareIncome: y.spareIncome / y.index,
           portfolioEnd: y.portfolioEnd / y.indexEnd,
           propertyEquityEnd: y.propertyEquityEnd / y.indexEnd,
           mortgageBalanceEnd: y.mortgageBalanceEnd / y.indexEnd,

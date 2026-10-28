@@ -6,6 +6,10 @@ import { ageAt, isIsoDate } from './dates';
 export interface ScenarioIssue { path: string; message: string }
 
 export const ACCOUNT_TYPES: AccountType[] = ['cash', 'gia', 'isa', 'lisa', 'dcPension'];
+/** Above this a yearly cost as a share of a home's value is almost certainly a typo. */
+const MAX_RUNNING_COST_PCT = 0.1;
+/** Accounts spare income can be paid into (pensions and LISAs have their own rules). */
+export const SURPLUS_ACCOUNT_TYPES: AccountType[] = ['cash', 'gia', 'isa'];
 const CONTRIBUTION_TYPES: Contribution['type'][] = ['fixedMonthly', 'pctOfSalary', 'employerPctOfSalary', 'lumpSum'];
 const MORTGAGE_TYPES: Mortgage['type'][] = ['repayment', 'interestOnly'];
 const RELIEF_METHODS: NonNullable<Account['pensionReliefMethod']>[] = ['netPay', 'reliefAtSource'];
@@ -70,6 +74,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     if (!validPerson(a.ownerIndex)) add(`${pre}.ownerIndex`, 'Owner must be one of the people');
     nonNeg(`${pre}.balance`, a.balance, 'Balance');
     if (!finite(a.annualFeePct) || a.annualFeePct < 0 || a.annualFeePct > 1) add(`${pre}.annualFeePct`, 'Fee must be between 0% and 100%');
+    if (a.annualFeeFixed !== undefined) nonNeg(`${pre}.annualFeeFixed`, a.annualFeeFixed, 'Fixed fee');
     const al = a.allocation;
     const parts = [al.equities, al.bonds, al.cash, al.property];
     if (parts.some((x) => !finite(x) || x < 0)) add(`${pre}.allocation`, 'Allocation shares must be 0% or more');
@@ -106,6 +111,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     const pre = `properties[${i}]`;
     nonNeg(`${pre}.value`, p.value, 'Value');
     nonNeg(`${pre}.runningCostsAnnual`, p.runningCostsAnnual, 'Running costs');
+    if (p.runningCostsPctOfValue !== undefined && (!finite(p.runningCostsPctOfValue) || p.runningCostsPctOfValue < 0 || p.runningCostsPctOfValue > MAX_RUNNING_COST_PCT)) add(`${pre}.runningCostsPctOfValue`, 'Must be between 0% and 10% of the home’s value');
     if (p.rentalIncomeAnnual !== undefined) nonNeg(`${pre}.rentalIncomeAnnual`, p.rentalIncomeAnnual, 'Rent');
     if (!finite(p.growthRealPct) || p.growthRealPct < -0.5 || p.growthRealPct > 0.5) add(`${pre}.growthRealPct`, 'Growth must be between -50% and 50%');
     const m = p.mortgage;
@@ -128,6 +134,14 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
       nonNeg(`${pre}.downsize.newValue`, p.downsize.newValue, 'New home value');
     }
   });
+  if (s.surplus !== undefined) {
+    if (!['cash', 'invest', 'spend'].includes(s.surplus.kind)) add('surplus', 'Choose what happens to spare income');
+    else if (s.surplus.kind === 'invest') {
+      const target = accById.get(s.surplus.accountId);
+      if (!target) add('surplus', 'Choose an account for spare income');
+      else if (!SURPLUS_ACCOUNT_TYPES.includes(target.type)) add('surplus', 'Spare income can only go into a cash account, GIA or ISA');
+    }
+  }
   if (s.properties.filter((p) => p.isMainResidence).length > 1) add('properties', 'Only one property can be the main residence');
 
   s.incomeStreams.forEach((st, i) => {

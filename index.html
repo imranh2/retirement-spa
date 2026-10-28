@@ -49,6 +49,7 @@
       /* Inputs on the left, a live results summary on the right (stacks on narrow screens). */
       .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--gap); align-items: start; }
       .layout.no-summary { grid-template-columns: minmax(0, 1fr); }
+      .mortgage-payment { margin: .25rem 0 0; padding: .6rem .8rem; background: var(--info-bg); border-radius: var(--radius); }
       .alloc-presets { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-bottom: .5rem; }
       .alloc-presets .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
       .layout.no-summary .summary { display: none; }

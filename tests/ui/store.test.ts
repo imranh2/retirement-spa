@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Store, STORAGE_KEYS } from '../../src/ui/store';
 import type { SimRunner, RunHandlers } from '../../src/ui/simClient';
+import type { RetireAgeValue } from '../../src/model/workerMessages';
 import { simulate } from '../../src/engine/simulate';
 import { DEFAULT_CONFIG } from '../../src/defaults/ukDefaults';
 import { EXAMPLE_SCENARIOS } from '../../src/ui/exampleScenarios';
@@ -198,5 +199,36 @@ describe('what-if values applied to the plan', () => {
     expect(after.people[1].retirementAge).toBe(ex.scenario.people[1].retirementAge - 2);
     expect(after.spending.map((p) => p.annualSpend)).toEqual(ex.scenario.spending.map((p) => Math.round(p.annualSpend * 0.9)));
     expect(s.getState().scenarioErrors).toEqual([]);
+  });
+});
+
+describe('welcome notice', () => {
+  it('shows on a first visit and stays away once dismissed, even if nothing was edited', () => {
+    const a = new Store({ autoRun: false });
+    expect(a.firstVisit).toBe(true);
+    a.dismissNotice('welcome');
+    expect(localStorage.getItem(STORAGE_KEYS.welcomed)).not.toBeNull();
+    expect(new Store({ autoRun: false }).firstVisit).toBe(false);
+  });
+});
+
+describe('earliest stop-work age', () => {
+  it('keeps the answer for the current run and ignores a late answer from an older one', async () => {
+    const resolvers: ((v: RetireAgeValue) => void)[] = [];
+    const runner: SimRunner = {
+      run: () => { /* main results are not needed here */ },
+      cancel: () => {},
+      retireAge: () => new Promise((resolve) => { resolvers.push(resolve); }),
+    };
+    const s = new Store({ initialScenario: small(), runner, autoRun: false });
+    const answer = (age: number): RetireAgeValue => ({ status: 'found', age, targetSuccessRate: 0.9, latestTried: 94 });
+    s.runNow();
+    s.runNow();
+    resolvers[0](answer(60));          // from the first, superseded run
+    await Promise.resolve();
+    expect(s.getState().retireAge).toBeUndefined();
+    resolvers[1](answer(64));
+    await Promise.resolve();
+    expect(s.getState().retireAge?.age).toBe(64);
   });
 });

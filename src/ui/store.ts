@@ -16,6 +16,7 @@ export const STORAGE_KEYS = {
   scenario: 'ukplanner.scenario.v1',
   config: 'ukplanner.config.v1',
   configBase: 'ukplanner.configBase.v1',   // the shipped defaults the user's config was based on
+  welcomed: 'ukplanner.welcomed.v1',       // the welcome notice was dismissed
 } as const;
 
 export const SAVE_DEBOUNCE_MS = 400;
@@ -96,6 +97,8 @@ export class Store {
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   /** Bumped when the scenario is replaced wholesale (example, import), so the UI does not compare unrelated runs. */
   replaceCount = 0;
+  /** Bumped on every run or cancel, so late answers from an older run are ignored. */
+  private runToken = 0;
   /** True when no saved scenario was found, i.e. this is a first visit showing the built-in example. */
   firstVisit = false;
   private runTimer: ReturnType<typeof setTimeout> | undefined;
@@ -149,6 +152,8 @@ export class Store {
   }
   dismissNotice(id: string): void {
     this.set({ notices: this.state.notices.filter((n) => n.id !== id) });
+    // Remember that the welcome was closed, so it does not come back on every visit.
+    if (id === 'welcome' && this.storage) { try { this.storage.setItem(STORAGE_KEYS.welcomed, 'true'); } catch { /* not persisted */ } }
   }
 
   // ---- persistence ----
@@ -172,7 +177,7 @@ export class Store {
     const cf = this.read(STORAGE_KEYS.config);
     const bs = this.read(STORAGE_KEYS.configBase);
     const patch: Partial<AppState> = {};
-    if (sc === undefined) this.firstVisit = true;
+    if (sc === undefined && this.read(STORAGE_KEYS.welcomed) === undefined) this.firstVisit = true;
     if (sc !== undefined) {
       if (looksLikeScenario(sc)) patch.scenario = sc;
       else this.addNotice({ id: 'corrupt-scenario', kind: 'error', text: 'Your saved scenario could not be read and was discarded. An example scenario has been loaded instead.' });
@@ -234,12 +239,14 @@ export class Store {
     }
     const { scenario, config } = this.state;
     this.set({ status: 'running', progress: { completed: 0, total: scenario.sim.runs }, runError: undefined, maxSpend: undefined, maxSpendProgress: undefined, retireAge: undefined });
+    // The earliest stop-work age search runs at the same time on its own worker.
+    const token = ++this.runToken;
+    void this.runner.retireAge?.(scenario, config).then((retireAge) => { if (retireAge && token === this.runToken) this.set({ retireAge }); });
     this.runner.run(scenario, config, {
       onProgress: (completed, total) => this.set({ progress: { completed, total } }),
       onResult: (results) => this.set({ results, status: 'done', progress: { completed: results.runs, total: results.runs } }),
       onMaxSpendProgress: (completed, total) => this.set({ maxSpendProgress: { completed, total } }),
       onMaxSpend: (maxSpend) => this.set({ maxSpend, maxSpendProgress: undefined }),
-      onRetireAge: (retireAge) => this.set({ retireAge }),
       // After the results arrive, an error can only come from the max-spend search: keep the results.
       onError: (message) => this.set(this.state.status === 'done' ? { runError: message, maxSpendProgress: undefined } : { status: 'error', runError: message, maxSpendProgress: undefined }),
       onCancelled: () => { if (this.state.status === 'running') this.set({ status: 'cancelled', maxSpendProgress: undefined }); else this.set({ maxSpendProgress: undefined }); },
@@ -254,6 +261,7 @@ export class Store {
   /** Cancel the run in progress. */
   cancelRun(): void {
     if (this.runTimer !== undefined) { clearTimeout(this.runTimer); this.runTimer = undefined; }
+    this.runToken += 1;
     this.runner?.cancel();
     if (this.state.status === 'running' || this.state.status === 'queued') this.set({ status: 'cancelled' });
   }

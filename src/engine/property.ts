@@ -15,13 +15,15 @@ export function rentNominal(property: Property, inflationIndex: number): number 
 }
 
 /**
- * Running costs for the year in nominal terms. After downsizing they scale with the new
- * home's value relative to the old one (both in today's money).
+ * Running costs for the year in nominal terms: the fixed amount (today's money, inflated),
+ * plus `runningCostsPctOfValue` of the home's current nominal value. After downsizing the
+ * fixed amount scales with the new home's value relative to the old one (both today's money);
+ * the percentage follows the new value by itself.
  */
-export function runningCostsNominal(property: Property, inflationIndex: number, downsized = false): number {
+export function runningCostsNominal(property: Property, inflationIndex: number, downsized = false, currentValue = property.value * inflationIndex): number {
   const d = property.downsize;
   const scale = downsized && d && property.value > 0 ? d.newValue / property.value : 1;
-  return property.runningCostsAnnual * scale * inflationIndex;
+  return property.runningCostsAnnual * scale * inflationIndex + (property.runningCostsPctOfValue ?? 0) * currentValue;
 }
 
 /**

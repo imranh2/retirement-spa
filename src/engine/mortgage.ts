@@ -1,13 +1,8 @@
 import type { Mortgage } from '../model/types';
 import { MONTHS_PER_YEAR, MORTGAGE_PAID_TOLERANCE_GBP } from './constants';
 
-/** Standard annuity payment per month. r = annualRate / 12; if r == 0, balance / months. */
-export function monthlyPaymentRepayment(balance: number, annualRate: number, months: number): number {
-  if (months <= 0) return balance;
-  const r = annualRate / MONTHS_PER_YEAR;
-  if (r === 0) return balance / months;
-  return (balance * r) / (1 - Math.pow(1 + r, -months));
-}
+import { monthlyPaymentRepayment } from '../model/mortgageMath';
+export { monthlyPaymentRepayment };
 
 /** Mortgage state carried between simulated years. All money nominal GBP. */
 export interface MortgageState {

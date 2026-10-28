@@ -1,11 +1,12 @@
-import type { Account, AccountType, Contribution, IncomeStream, Person, Property, Scenario, WithdrawalStrategy } from '../model/types';
+import type { Account, AccountType, Contribution, IncomeStream, Mortgage, Person, Property, Scenario, WithdrawalStrategy } from '../model/types';
+import { mortgagePayments } from '../model/mortgageMath';
 import type { Store } from './store';
 import { h, confirmButton } from './dom';
 import { numberField, textField, selectField, checkboxField, errorSlot } from './fields';
 import { formatMoney, formatPct } from './format';
 import { ageAt, isIsoDate } from '../model/dates';
 import { defaultStatePensionStartAge, minimumPensionAccessAge, statePensionAge } from '../model/ageRules';
-import { ACCOUNT_TYPES, MIN_HISTORY_ROWS } from '../model/validateScenario';
+import { ACCOUNT_TYPES, MIN_HISTORY_ROWS, SURPLUS_ACCOUNT_TYPES } from '../model/validateScenario';
 import { EXAMPLE_SCENARIOS, starterScenario } from './exampleScenarios';
 import { keyFacts, verdictBlock } from './verdict';
 
@@ -86,11 +87,41 @@ export function describeScenario(s: Scenario): string[] {
       : st.kind === 'guardrails' ? `in retirement, guardrails start at ${formatPct(st.initialPct)} of the portfolio and adjust by ${formatPct(st.adjust)}`
         : `in retirement, spending is ${formatPct(st.pct)} of the portfolio, kept between ${formatMoney(st.floor)} and ${formatMoney(st.ceiling)}`;
   out.push(`Strategy: ${strat}. Accounts are drawn in this order: ${s.withdrawalOrder.map((t) => SHORT_LABEL[t]).join(' → ')}.`);
+  out.push(`Spare income (left after spending, tax and saving) is ${surplusDescription(s)}.`);
   out.push(`The model runs ${s.sim.runs.toLocaleString('en-GB')} simulations until ${names[0]} is ${s.sim.horizonAge}.`);
   return out;
 }
 
 /** Where a scenario validation path lives in the UI: the tab and a readable name for the item. */
+/** Plain-English destination for spare income, e.g. "kept as cash savings". */
+export function surplusDescription(s: Scenario): string {
+  const r = s.surplus ?? { kind: 'cash' };
+  if (r.kind === 'spend') return 'treated as spent';
+  if (r.kind === 'cash') return 'kept as cash savings';
+  const acc = s.accounts.find((a) => a.id === r.accountId);
+  return `invested in ${acc?.name || 'the chosen account'}${acc?.type === 'isa' ? ' (up to the ISA allowance)' : ''}`;
+}
+
+/** The "Spare income" setting: keep as cash, invest in a cash account/GIA/ISA, or treat as spent. */
+function surplusSection(c: TabCtx): HTMLElement {
+  const s = sc(c);
+  const r = s.surplus ?? { kind: 'cash' as const };
+  const value = r.kind === 'invest' ? `invest:${r.accountId}` : r.kind;
+  const targets = s.accounts.filter((a) => SURPLUS_ACCOUNT_TYPES.includes(a.type));
+  return h('section', { class: 'panel-section' }, h('h3', {}, 'Spare income'),
+    h('p', { class: 'muted' }, 'In years when income is more than spending, tax, mortgage and the contributions you set up, the difference has to go somewhere. Results → Central case shows how much there is each year (“Spare income”).'),
+    h('div', { class: 'grid' }, wide(selectField({
+      label: 'What happens to spare income', value, errorPath: 'surplus',
+      help: 'Keeping it as cash is the default. If in real life you spend it, choose “Treat it as spent” (or raise your spending); if you invest it, choose the account. An ISA takes it only up to what is left of the owner’s allowance after their contributions; the rest goes to their GIA, or cash.',
+      options: [
+        { value: 'cash', label: 'Keep it as cash savings (first cash account)' },
+        ...targets.map((a) => ({ value: `invest:${a.id}`, label: `Invest it in ${a.name || ACCOUNT_LABEL[a.type]}${a.type === 'isa' ? ' (within the ISA allowance)' : ''}` })),
+        { value: 'spend', label: 'Treat it as spent (not saved)' },
+      ],
+      onChange: (v) => setS(c, 'surplus', v.startsWith('invest:') ? { kind: 'invest', accountId: v.slice('invest:'.length) } : { kind: v as 'cash' | 'spend' }),
+    }))));
+}
+
 export function issueLocation(path: string, s: Scenario): { tab: string; tabLabel: string; item: string } {
   const m = /^(\w+)(?:\[(\d+)\])?/.exec(path);
   const root = m?.[1] ?? '';
@@ -105,6 +136,7 @@ export function issueLocation(path: string, s: Scenario): { tab: string; tabLabe
     case 'spending': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: i !== undefined ? `Spending phase ${i + 1}` : 'Spending plan' };
     case 'strategy': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Withdrawal strategy' };
     case 'withdrawalOrder': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Withdrawal order' };
+    case 'surplus': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Spare income' };
     case 'sim': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Simulation settings' };
     default: return { tab: 'rules', tabLabel: 'Rules & Assumptions', item: path };
   }
@@ -261,7 +293,8 @@ function accountFields(c: TabCtx, a: Account, i: number): Node[] {
     selectField({ label: 'Type', value: a.type, errorPath: `${pre}.type`, options: ACCOUNT_TYPES.map((t) => ({ value: t, label: ACCOUNT_LABEL[t] })), onChange: (v) => { setS(c, `${pre}.type`, v); const order = sc(c).withdrawalOrder; if (!order.includes(v)) setS(c, 'withdrawalOrder', [...order, v]); c.rerender(); } }),
     selectField({ label: 'Owner', value: String(a.ownerIndex), options: personOptions(s), errorPath: `${pre}.ownerIndex`, help: 'Tax on withdrawals is calculated for the owner.', onChange: (v) => setS(c, `${pre}.ownerIndex`, Number(v)) }),
     numberField({ label: 'Balance today', unit: 'gbp', min: 0, step: 100, value: a.balance, errorPath: `${pre}.balance`, onChange: (v) => setS(c, `${pre}.balance`, v ?? 0) }),
-    numberField({ label: 'Annual fee', unit: 'pct', min: 0, max: 0.1, step: 0.0001, value: a.annualFeePct, errorPath: `${pre}.annualFeePct`, help: 'Platform plus fund charges, taken once a year.', onChange: (v) => setS(c, `${pre}.annualFeePct`, v ?? 0) }),
+    numberField({ label: 'Annual fee', unit: 'pct', min: 0, max: 0.1, step: 0.0001, value: a.annualFeePct, errorPath: `${pre}.annualFeePct`, help: 'Charges taken as a percentage of the balance each year, e.g. fund charges plus a percentage platform fee.', onChange: (v) => setS(c, `${pre}.annualFeePct`, v ?? 0) }),
+    numberField({ label: 'Fixed fee per year', unit: 'gbp', nullable: true, min: 0, step: 10, value: a.annualFeeFixed, placeholder: 'none', errorPath: `${pre}.annualFeeFixed`, help: 'A flat platform fee in pounds (e.g. £120 a year), in today’s money; it rises with inflation. Applies on top of the percentage fee.', onChange: (v) => setS(c, `${pre}.annualFeeFixed`, v ?? undefined) }),
   ];
   const presetRow = h('div', { class: 'alloc-presets full', role: 'group', 'aria-label': 'Investment mix presets' },
     h('span', { class: 'muted small' }, 'Quick fill:'),
@@ -373,6 +406,18 @@ export function renderContributions(c: TabCtx): HTMLElement {
 
 // ---------------- Property & Mortgage ----------------
 
+/** The calculated monthly payment, so it can be checked against the lender's figure. */
+function mortgagePaymentNote(m: Mortgage, id: string): HTMLElement {
+  const pay = mortgagePayments(m);
+  const over = m.monthlyOverpayment > 0 ? ` plus your ${formatMoney(m.monthlyOverpayment)} overpayment` : '';
+  const kind = m.type === 'interestOnly' ? 'Interest-only payment' : 'Monthly payment';
+  const fixed = m.fixedYearsRemaining > 0 && pay.afterFix !== undefined;
+  return h('p', { id, class: 'full mortgage-payment', 'aria-live': 'polite' },
+    h('strong', {}, `${kind}: ${formatMoney(pay.now)}`), over,
+    fixed ? `, then about ${formatMoney(pay.afterFix ?? 0)} a month at ${formatPct(m.reversionRate)} once the fix ends` : '',
+    '. ', h('span', { class: 'muted' }, 'Worked out from the balance, rates and term; check it against your lender’s figure.'));
+}
+
 function propertyFields(c: TabCtx, p: Property, i: number): Node[] {
   const pre = `properties[${i}]`;
   const s = sc(c);
@@ -380,21 +425,31 @@ function propertyFields(c: TabCtx, p: Property, i: number): Node[] {
     textField({ label: 'Name', value: p.name, errorPath: `${pre}.name`, onChange: (v) => setS(c, `${pre}.name`, v) }),
     numberField({ label: 'Value today', unit: 'gbp', min: 0, step: 1000, value: p.value, errorPath: `${pre}.value`, onChange: (v) => setS(c, `${pre}.value`, v ?? 0) }),
     numberField({ label: 'Growth above inflation', unit: 'pct', step: 0.001, value: p.growthRealPct, errorPath: `${pre}.growthRealPct`, help: 'Replaces the market property return for this home; the year-to-year volatility still applies.', onChange: (v) => setS(c, `${pre}.growthRealPct`, v ?? 0) }),
-    numberField({ label: 'Running costs per year', unit: 'gbp', min: 0, step: 100, value: p.runningCostsAnnual, errorPath: `${pre}.runningCostsAnnual`, help: 'Insurance, maintenance, service charges, in today’s money.', onChange: (v) => setS(c, `${pre}.runningCostsAnnual`, v ?? 0) }),
+    numberField({ label: 'Running costs per year', unit: 'gbp', min: 0, step: 100, value: p.runningCostsAnnual, errorPath: `${pre}.runningCostsAnnual`, help: 'Fixed costs such as insurance, council tax or service charges, in today’s money.', onChange: (v) => setS(c, `${pre}.runningCostsAnnual`, v ?? 0) }),
+    numberField({ label: 'Plus % of home value per year', unit: 'pct', nullable: true, min: 0, max: 0.1, step: 0.001, value: p.runningCostsPctOfValue, placeholder: 'none', errorPath: `${pre}.runningCostsPctOfValue`, help: 'Costs that grow with the home’s value, such as maintenance (often 1% a year). Added to the fixed amount.', onChange: (v) => setS(c, `${pre}.runningCostsPctOfValue`, v ?? undefined) }),
     numberField({ label: 'Rental income per year', unit: 'gbp', nullable: true, min: 0, step: 100, value: p.rentalIncomeAnnual, placeholder: 'not let', errorPath: `${pre}.rentalIncomeAnnual`, help: 'Taxable income, split equally between the people.', onChange: (v) => setS(c, `${pre}.rentalIncomeAnnual`, v ?? undefined) }),
     checkboxField({ label: 'Main residence', checked: p.isMainResidence, errorPath: `${pre}.isMainResidence`, help: 'Only the main residence can be downsized. Its sale is free of CGT.', onChange: (v) => { setS(c, `${pre}.isMainResidence`, v); c.rerender(); } }),
   ];
   const m = p.mortgage;
+  const payId = `mortgage-pay-${i}`;
+  /** Set a mortgage field and refresh the calculated payment beside the form. */
+  const setM = (key: keyof Mortgage, value: unknown) => {
+    setS(c, `${pre}.mortgage.${key}`, value);
+    const now = sc(c).properties[i]?.mortgage;
+    const el = document.getElementById(payId);
+    if (now && el) el.replaceWith(mortgagePaymentNote(now, payId));
+  };
   fields.push(h('fieldset', { class: 'full' }, h('legend', {}, 'Mortgage'),
     checkboxField({ label: 'Has a mortgage', checked: m !== undefined, onChange: (v) => { setS(c, `${pre}.mortgage`, v ? { balance: 100000, type: 'repayment', rate: 0.045, fixedYearsRemaining: 2, reversionRate: 0.065, termYearsRemaining: 20, monthlyOverpayment: 0 } : undefined); c.rerender(); } }),
     m ? h('div', { class: 'grid' },
-      numberField({ label: 'Balance', unit: 'gbp', min: 0, step: 1000, value: m.balance, errorPath: `${pre}.mortgage.balance`, onChange: (v) => setS(c, `${pre}.mortgage.balance`, v ?? 0) }),
-      selectField({ label: 'Type', value: m.type, options: [{ value: 'repayment', label: 'Repayment' }, { value: 'interestOnly', label: 'Interest only' }], onChange: (v) => setS(c, `${pre}.mortgage.type`, v) }),
-      numberField({ label: 'Current rate', unit: 'pct', min: 0, max: 0.3, step: 0.0005, value: m.rate, errorPath: `${pre}.mortgage.rate`, onChange: (v) => setS(c, `${pre}.mortgage.rate`, v ?? 0) }),
-      numberField({ label: 'Years left on fixed rate', unit: 'years', min: 0, step: 0.5, value: m.fixedYearsRemaining, errorPath: `${pre}.mortgage.fixedYearsRemaining`, onChange: (v) => setS(c, `${pre}.mortgage.fixedYearsRemaining`, v ?? 0) }),
-      numberField({ label: 'Rate after the fix', unit: 'pct', min: 0, max: 0.3, step: 0.0005, value: m.reversionRate, errorPath: `${pre}.mortgage.reversionRate`, onChange: (v) => setS(c, `${pre}.mortgage.reversionRate`, v ?? 0) }),
-      numberField({ label: 'Term remaining', unit: 'years', min: 0, step: 0.5, value: m.termYearsRemaining, errorPath: `${pre}.mortgage.termYearsRemaining`, help: 'Any balance left at the end of the term (e.g. interest-only) is paid as a lump sum the following year.', onChange: (v) => setS(c, `${pre}.mortgage.termYearsRemaining`, v ?? 0) }),
-      numberField({ label: 'Monthly overpayment', unit: 'gbp', min: 0, step: 10, value: m.monthlyOverpayment, errorPath: `${pre}.mortgage.monthlyOverpayment`, help: 'Fixed cash amount, not inflated.', onChange: (v) => setS(c, `${pre}.mortgage.monthlyOverpayment`, v ?? 0) }),
+      numberField({ label: 'Balance', unit: 'gbp', min: 0, step: 1000, value: m.balance, errorPath: `${pre}.mortgage.balance`, onChange: (v) => setM('balance', v ?? 0) }),
+      selectField({ label: 'Type', value: m.type, options: [{ value: 'repayment', label: 'Repayment' }, { value: 'interestOnly', label: 'Interest only' }], onChange: (v) => setM('type', v) }),
+      numberField({ label: 'Current rate', unit: 'pct', min: 0, max: 0.3, step: 0.0005, value: m.rate, errorPath: `${pre}.mortgage.rate`, onChange: (v) => setM('rate', v ?? 0) }),
+      numberField({ label: 'Years left on fixed rate', unit: 'years', min: 0, step: 0.5, value: m.fixedYearsRemaining, errorPath: `${pre}.mortgage.fixedYearsRemaining`, onChange: (v) => setM('fixedYearsRemaining', v ?? 0) }),
+      numberField({ label: 'Rate after the fix', unit: 'pct', min: 0, max: 0.3, step: 0.0005, value: m.reversionRate, errorPath: `${pre}.mortgage.reversionRate`, onChange: (v) => setM('reversionRate', v ?? 0) }),
+      numberField({ label: 'Term remaining', unit: 'years', min: 0, step: 0.5, value: m.termYearsRemaining, errorPath: `${pre}.mortgage.termYearsRemaining`, help: 'Any balance left at the end of the term (e.g. interest-only) is paid as a lump sum the following year.', onChange: (v) => setM('termYearsRemaining', v ?? 0) }),
+      numberField({ label: 'Monthly overpayment', unit: 'gbp', min: 0, step: 10, value: m.monthlyOverpayment, errorPath: `${pre}.mortgage.monthlyOverpayment`, help: 'Fixed cash amount, not inflated.', onChange: (v) => setM('monthlyOverpayment', v ?? 0) }),
+      mortgagePaymentNote(m, payId),
     ) : null));
   if (p.isMainResidence) {
     const d = p.downsize;
@@ -494,6 +549,7 @@ export function renderSpending(c: TabCtx): HTMLElement {
         wide(selectField({ label: 'Strategy', value: s.strategy.kind, options: (Object.keys(STRATEGY_LABEL) as WithdrawalStrategy['kind'][]).map((k) => ({ value: k, label: STRATEGY_LABEL[k] })),
           onChange: (k) => { setS(c, 'strategy', STRATEGY_DEFAULTS[k]); c.rerender(); } })),
         ...strategyFields(c, s.strategy))),
+    surplusSection(c),
     h('section', { class: 'panel-section' }, h('h3', {}, 'Withdrawal order'),
       h('p', { class: 'muted' }, 'Accounts are drawn in this order when income does not cover spending. Locked pensions and LISAs are skipped until accessible, so an ISA/GIA/cash “bridge” works automatically.'),
       errorSlot('withdrawalOrder'),

@@ -6,6 +6,7 @@ import { fanChart, barChart, stackedBars, percentLine, destroyCharts } from './c
 import { keyFacts, verdictBlock } from './verdict';
 import { cumulativeDepletion } from './longevity';
 import { whatIfPanel } from './whatIf';
+import { surplusDescription } from './scenarioTabs';
 
 export interface ResultsCtx { store: Store; rerender: () => void }
 
@@ -30,11 +31,12 @@ const CENTRAL_COLUMNS: { key: keyof CentralCaseRow; label: string }[] = [
   { key: 'drawCash', label: 'From cash' }, { key: 'drawGia', label: 'From GIA' }, { key: 'drawIsa', label: 'From ISA' }, { key: 'drawLisa', label: 'From LISA' }, { key: 'drawPension', label: 'From pensions' },
   { key: 'spending', label: 'Spending' }, { key: 'mortgagePayments', label: 'Mortgage' }, { key: 'propertyCosts', label: 'Property costs' },
   { key: 'taxPaid', label: 'Income tax + CGT' }, { key: 'niPaid', label: 'NI' },
+  { key: 'savedFromPay', label: 'Saved from pay' }, { key: 'spareIncome', label: 'Spare income' },
   { key: 'portfolioEnd', label: 'Portfolio (end)' }, { key: 'propertyEquityEnd', label: 'Property equity (end)' }, { key: 'mortgageBalanceEnd', label: 'Mortgage left (end)' },
 ];
 
 function centralCsv(rows: CentralCaseRow[]): string {
-  const esc = (v: string | number) => (typeof v === 'number' ? v.toFixed(2) : `"${v.replace(/"/g, '""')}"`);
+  const esc = (v: string | number | undefined) => (typeof v === 'string' ? `"${v.replace(/"/g, '""')}"` : (v ?? 0).toFixed(2));
   return [CENTRAL_COLUMNS.map((c) => esc(c.label)).join(','), ...rows.map((r) => CENTRAL_COLUMNS.map((c) => esc(r[c.key])).join(','))].join('\n');
 }
 
@@ -60,6 +62,17 @@ function niceCeil(v: number): number {
   const p = 10 ** Math.floor(Math.log10(v));
   const STEPS = [1, 2, 2.5, 5, 10];
   return (STEPS.find((m) => m * p >= v) ?? 10) * p;
+}
+
+/**
+ * Bands hold year-END values, recorded against the age at the START of each year. For the
+ * charts, start at the known value today (every percentile equal) and plot each year-end
+ * value at the next age, so age 50 shows what you have now and the last point is the horizon.
+ */
+export function bandsFromStart(ages: number[], b: PercentileBands, startValue: number): { ages: number[]; bands: PercentileBands } {
+  const keys = ['p5', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'] as const;
+  const bands = Object.fromEntries(keys.map((k) => [k, [startValue, ...b[k]]])) as unknown as PercentileBands;
+  return { ages: ages.length ? [ages[0], ...ages.map((a) => a + 1)] : [], bands };
 }
 
 /** Key for the fan charts' shaded bands (Chart.js's own legend cannot describe a filled range). */
@@ -134,8 +147,13 @@ export function renderResults(c: ResultsCtx): HTMLElement {
 
   const portfolioBands = realMode ? r.portfolioReal : r.portfolioNominal;
   const netWorthBands = realMode ? r.netWorthReal : (r.netWorthNominal ?? r.netWorthReal);
-  const portfolioCap = fanYMax(portfolioBands);
-  const netWorthCap = fanYMax(netWorthBands);
+  // Today's values (the same in real and nominal terms at the start).
+  const startPortfolio = s.accounts.reduce((sum, a) => sum + a.balance, 0);
+  const startEquity = s.properties.reduce((sum, p) => sum + p.value - (p.mortgage?.balance ?? 0), 0);
+  const portfolioChart = bandsFromStart(r.ages, portfolioBands, startPortfolio);
+  const netWorthChart = bandsFromStart(r.ages, netWorthBands, startPortfolio + startEquity);
+  const portfolioCap = fanYMax(portfolioChart.bands);
+  const netWorthCap = fanYMax(netWorthChart.bands);
   const clipNote = ' The best 5% of outcomes run off the top of the chart so the typical range is readable.';
   const fan = chartBox('Portfolio value by age', 'chart-portfolio', `Half of the simulated outcomes fall in the darker band and 90% in the lighter one. Savings and investments only; excludes property.${portfolioCap ? clipNote : ''}`, fanLegend());
   const hasProperty = s.properties.length > 0;
@@ -183,15 +201,15 @@ export function renderResults(c: ResultsCtx): HTMLElement {
     h('section', { class: 'panel-section' },
       h('div', { class: 'section-head' }, h('h3', {}, 'Central case (mean assumptions, no volatility)'),
         h('button', { type: 'button', class: 'btn small', onclick: () => downloadText('central-case.csv', 'text/csv', centralCsv(rows)) }, 'Download CSV')),
-      h('p', { class: 'muted' }, `One deterministic run using the average return and inflation every year, in today’s money. Useful for checking the model by hand.${cols.length < CENTRAL_COLUMNS.length ? ' Columns that are always zero are hidden here but included in the CSV.' : ''}`),
+      h('p', { class: 'muted' }, `One deterministic run using the average return and inflation every year, in today’s money. Useful for checking the model by hand: income plus withdrawals covers spending, mortgage, property costs, tax, NI and “Saved from pay”; anything left is “Spare income”, which is ${surplusDescription(s)}.${cols.length < CENTRAL_COLUMNS.length ? ' Columns that are always zero are hidden here but included in the CSV.' : ''}`),
       table),
     h('p', { class: 'muted small' }, `Seed ${r.meta.seed} · ${r.runs.toLocaleString('en-GB')} runs · ${Math.round(r.meta.durationMs)} ms · defaults ${r.meta.defaultsVersion}`));
 
   // Draw charts after the element is attached (canvas sizes are reserved in CSS, so no layout shift).
   requestAnimationFrame(() => {
     const ages = r.ages;
-    void fanChart(fan.canvas, ages, portfolioBands, moneyLabel, portfolioCap);
-    if (hasProperty) void fanChart(nw.canvas, ages, netWorthBands, moneyLabel, netWorthCap);
+    void fanChart(fan.canvas, portfolioChart.ages, portfolioChart.bands, moneyLabel, portfolioCap);
+    if (hasProperty) void fanChart(nw.canvas, netWorthChart.ages, netWorthChart.bands, moneyLabel, netWorthCap);
     void percentLine(dep.canvas, ages, runOut, 'Run out of money', 'Runs out of money (%)');
     void stackedBars(inc.canvas, ages, r.incomeBySourceMeanReal, r.fundedShareByAge);
     void barChart(tax.canvas, ages, r.taxPaidByAgeMeanReal, 'Tax paid', '£ per year (today’s money)', true);
