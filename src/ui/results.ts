@@ -1,0 +1,200 @@
+import type { CentralCaseRow, PercentileBands } from '../model/types';
+import type { Store } from './store';
+import { h, downloadText, uid } from './dom';
+import { formatMoney, formatPct } from './format';
+import { fanChart, barChart, stackedBars, percentLine, destroyCharts } from './charts';
+import { keyFacts, verdictBlock } from './verdict';
+import { cumulativeDepletion } from './longevity';
+import { whatIfPanel } from './whatIf';
+
+export interface ResultsCtx { store: Store; rerender: () => void }
+
+const PREF_KEY = 'ukplanner.prefs.v1';
+
+/** Per-viewer display preference (Real/Nominal); storage failures fall back to the default. */
+function readRealMode(): boolean {
+  try {
+    const raw = localStorage.getItem(PREF_KEY);
+    return raw === null ? true : (JSON.parse(raw) as { real?: boolean }).real !== false;
+  } catch { return true; }
+}
+function writeRealMode(real: boolean): void {
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ real })); } catch { /* not persisted */ }
+}
+
+let realMode = readRealMode();
+
+const CENTRAL_COLUMNS: { key: keyof CentralCaseRow; label: string }[] = [
+  { key: 'age', label: 'Age' }, { key: 'taxYear', label: 'Tax year' },
+  { key: 'salary', label: 'Salary' }, { key: 'statePension', label: 'State Pension' }, { key: 'otherIncome', label: 'Other income' }, { key: 'rentalIncome', label: 'Rent' },
+  { key: 'drawCash', label: 'From cash' }, { key: 'drawGia', label: 'From GIA' }, { key: 'drawIsa', label: 'From ISA' }, { key: 'drawLisa', label: 'From LISA' }, { key: 'drawPension', label: 'From pensions' },
+  { key: 'spending', label: 'Spending' }, { key: 'mortgagePayments', label: 'Mortgage' }, { key: 'propertyCosts', label: 'Property costs' },
+  { key: 'taxPaid', label: 'Income tax + CGT' }, { key: 'niPaid', label: 'NI' },
+  { key: 'portfolioEnd', label: 'Portfolio (end)' }, { key: 'propertyEquityEnd', label: 'Property equity (end)' }, { key: 'mortgageBalanceEnd', label: 'Mortgage left (end)' },
+];
+
+function centralCsv(rows: CentralCaseRow[]): string {
+  const esc = (v: string | number) => (typeof v === 'number' ? v.toFixed(2) : `"${v.replace(/"/g, '""')}"`);
+  return [CENTRAL_COLUMNS.map((c) => esc(c.label)).join(','), ...rows.map((r) => CENTRAL_COLUMNS.map((c) => esc(r[c.key])).join(','))].join('\n');
+}
+
+/** Columns that are zero in every row are hidden on screen (the CSV keeps them all). */
+const ALWAYS_SHOWN = new Set<keyof CentralCaseRow>(['age', 'taxYear', 'spending', 'portfolioEnd']);
+function visibleColumns(rows: CentralCaseRow[]) {
+  return CENTRAL_COLUMNS.filter((c) => ALWAYS_SHOWN.has(c.key) || rows.some((r) => typeof r[c.key] === 'number' && Math.abs(r[c.key] as number) >= 0.5));
+}
+
+/**
+ * A y-axis cap for fan charts: the top 5% of runs can be many times the median and
+ * squash everything else, so cap at 1.5x the highest 75th percentile when that is lower.
+ */
+function fanYMax(b: PercentileBands): number | undefined {
+  const TAIL_CAP = 1.5;
+  const cap = niceCeil(Math.max(...b.p75) * TAIL_CAP);
+  return cap > 0 && Math.max(...b.p95) > cap ? cap : undefined;
+}
+
+/** Round up to 1, 2, 2.5 or 5 times a power of ten, so a capped axis ends on a round tick. */
+function niceCeil(v: number): number {
+  if (!(v > 0)) return 0;
+  const p = 10 ** Math.floor(Math.log10(v));
+  const STEPS = [1, 2, 2.5, 5, 10];
+  return (STEPS.find((m) => m * p >= v) ?? 10) * p;
+}
+
+/** Key for the fan charts' shaded bands (Chart.js's own legend cannot describe a filled range). */
+function fanLegend(): HTMLElement {
+  return h('span', { class: 'fan-legend', 'aria-hidden': 'true' },
+    h('span', {}, h('i', { class: 'sw median' }), 'Median'),
+    h('span', {}, h('i', { class: 'sw inner' }), 'Middle 50%'),
+    h('span', {}, h('i', { class: 'sw outer' }), 'Middle 90%'));
+}
+
+function chartBox(title: string, canvasId: string, caption: string, extra: Node | null = null): { el: HTMLElement; canvas: HTMLCanvasElement } {
+  const canvas = h('canvas', { id: canvasId, role: 'img', 'aria-label': `${title}. ${caption}` });
+  const el = h('figure', { class: 'chart' }, h('figcaption', {}, h('strong', {}, title), extra), h('div', { class: 'chart-box' }, canvas), h('p', { class: 'muted small' }, caption));
+  return { el, canvas };
+}
+
+/**
+ * What the simulation is doing right now, with a progress bar: waiting for edits to settle,
+ * running the simulations (with Cancel), then working out the max sustainable spend.
+ * Hidden when idle. Rendered into every `.progress-slot`, which the app refreshes on each change.
+ */
+export function progressBar(store: Store): HTMLElement {
+  const st = store.getState();
+  const ms = st.maxSpendProgress;
+  const id = uid('sim-progress');
+  if (st.status === 'queued') {
+    return h('div', { class: 'progress-wrap' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), h('span', {}, 'Change noticed, re-running shortly…'));
+  }
+  if (st.status === 'running') {
+    const pct = st.progress.total > 0 ? st.progress.completed / st.progress.total : 0;
+    return h('div', { class: 'progress-wrap' },
+      h('label', { for: id }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), ` Running ${st.progress.total.toLocaleString('en-GB')} simulations… ${Math.round(pct * 100)}%`),
+      h('progress', { id, max: 1, value: pct }),
+      h('button', { type: 'button', class: 'btn small', onclick: () => store.cancelRun() }, 'Cancel'));
+  }
+  if (st.status === 'done' && !st.maxSpend && ms) {
+    return h('div', { class: 'progress-wrap' },
+      h('label', { for: id }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), ` Working out max sustainable spend… step ${Math.min(ms.completed + 1, ms.total)} of up to ${ms.total}`),
+      h('progress', { id, max: ms.total, value: ms.completed }));
+  }
+  return h('div', { class: 'progress-wrap', hidden: true });
+}
+
+/** A live slot for progressBar (the app re-renders its contents on every state change). */
+export function progressSlot(store: Store): HTMLElement {
+  return h('div', { class: 'progress-slot', 'aria-live': 'polite' }, progressBar(store));
+}
+
+export function renderResults(c: ResultsCtx): HTMLElement {
+  destroyCharts();
+  const st = c.store.getState();
+  const r = st.results;
+  const s = st.scenario;
+  const statusMsg = st.status === 'invalid' ? h('p', { class: 'error' }, 'The scenario or rules have errors, so the simulation has not run. See the highlighted fields (Overview lists them).')
+    : st.status === 'error' ? h('p', { class: 'error', role: 'alert' }, `Simulation failed: ${st.runError ?? 'unknown error'}`)
+      : st.status === 'cancelled' ? h('p', { class: 'muted' }, 'Run cancelled. Results below (if any) are from the previous run.', h('button', { type: 'button', class: 'btn small', onclick: () => c.store.runNow() }, 'Run again'))
+        : null;
+  if (!r) {
+    return h('div', {}, h('h2', {}, 'Results'), progressSlot(c.store), statusMsg ?? h('p', { class: 'muted' }, 'Results appear here after the first run.'),
+      ...['Portfolio', 'Net worth', 'Depletion', 'Income', 'Tax'].map(() => h('div', { class: 'chart placeholder' }, h('div', { class: 'chart-box' }))));
+  }
+
+  const at = (xs: number[]) => xs[xs.length - 1] ?? 0;
+  const target = s.sim.targetSuccessRate;
+  const stale = st.status === 'running' || st.status === 'queued';
+
+  const toggleId = 'real-toggle';
+  const toggle = h('span', { class: 'toggle' },
+    h('input', { type: 'checkbox', id: toggleId, checked: realMode, onchange: (e: Event) => { realMode = (e.target as HTMLInputElement).checked; writeRealMode(realMode); c.rerender(); } }),
+    h('label', { for: toggleId }, ' Show in today’s money (real)'));
+  const moneyLabel = realMode ? '£ (today’s money)' : '£ (nominal, future money)';
+
+  const portfolioBands = realMode ? r.portfolioReal : r.portfolioNominal;
+  const netWorthBands = realMode ? r.netWorthReal : (r.netWorthNominal ?? r.netWorthReal);
+  const portfolioCap = fanYMax(portfolioBands);
+  const netWorthCap = fanYMax(netWorthBands);
+  const clipNote = ' The best 5% of outcomes run off the top of the chart so the typical range is readable.';
+  const fan = chartBox('Portfolio value by age', 'chart-portfolio', `Half of the simulated outcomes fall in the darker band and 90% in the lighter one. Savings and investments only; excludes property.${portfolioCap ? clipNote : ''}`, fanLegend());
+  const hasProperty = s.properties.length > 0;
+  const nw = chartBox('Net worth by age', 'chart-networth', `Portfolio plus property equity (value minus mortgages). Same bands as above.${netWorthCap ? clipNote : ''}`, fanLegend());
+  const runOut = cumulativeDepletion(r);
+  const dep = chartBox('Chance the money has run out, by age', 'chart-depletion', r.depletionAgeHistogram.length === 0
+    ? 'No simulated run ran out of money.'
+    : `Share of the ${r.runs.toLocaleString('en-GB')} simulated futures that could no longer pay for planned spending by each age. The value at ${s.sim.horizonAge - 1} is the overall failure rate (${formatPct(1 - r.successRate)}).`);
+  const inc = chartBox('Where the money comes from', 'chart-income', 'Average income and withdrawals per year, in today’s money, with withdrawals net of tax. Each year averages only the runs that still met spending in full, so the bars show what a funded year looks like; the dashed line shows how many runs that is.');
+  const tax = chartBox('Tax paid by age', 'chart-tax', 'Average income tax, NI and CGT per year in today’s money, over runs that still met spending in full that year.');
+
+  const maxSpend = st.maxSpend;
+  const maxCard = h('div', { class: 'card stat' },
+    h('h3', {}, `Max sustainable spend at ${Math.round(target * 100)}% success`),
+    maxSpend
+      ? h('div', {}, h('p', { class: 'big' }, `${formatMoney(maxSpend.annualSpendReal)} a year`),
+        h('p', { class: 'muted' }, `Your plan scaled to ${formatPct(maxSpend.multiplier)} in every phase, spent as a fixed amount rising with inflation (whatever strategy you chose).`),
+        ...maxSpend.warnings.map((w) => h('p', { class: 'warning' }, w)))
+      : h('p', { class: 'muted' }, stale ? 'Waiting for the current run…' : st.status === 'done' && st.runError ? `Could not work this out: ${st.runError}` : st.status === 'done' ? 'Working it out (this re-runs the simulation several times)…' : '—'));
+
+  const rows = r.centralCase;
+  const cols = visibleColumns(rows);
+  const table = h('div', { class: 'table-wrap tall', tabindex: 0, role: 'region', 'aria-label': 'Central case table' }, h('table', { class: 'data-table sticky-first' },
+    h('thead', {}, h('tr', {}, ...cols.map((col) => h('th', { scope: 'col' }, col.label)))),
+    h('tbody', {}, ...rows.map((row) => h('tr', {}, ...cols.map((col) => {
+      const v = row[col.key];
+      return col.key === 'age' ? h('th', { scope: 'row' }, String(v)) : h('td', {}, typeof v === 'number' ? formatMoney(v) : v);
+    }))))));
+
+  const el = h('div', { class: stale ? 'results stale' : 'results' },
+    h('div', { class: 'results-head' }, h('h2', {}, 'Results'), toggle),
+    progressSlot(c.store),
+    statusMsg,
+    stale ? h('p', { class: 'muted' }, 'Updating… the figures below are from the previous run.') : null,
+    h('section', { class: 'panel-section' }, verdictBlock(r, s, maxSpend, stale ? null : 'Working out how much you could spend…'), keyFacts(r, s, st.retireAge, !stale && st.status === 'done')),
+    whatIfPanel(c.store, r),
+    h('div', { class: 'stats' },
+      maxCard,
+      h('div', { class: 'card stat' }, h('h3', {}, `Portfolio at age ${s.sim.horizonAge}`), h('p', { class: 'big' }, formatMoney(at(portfolioBands.p50))),
+        h('p', { class: 'muted' }, `Typical (median) outcome, ${realMode ? 'today’s money' : 'nominal'}. ${at(portfolioBands.p5) < 1 ? 'At least 1 run in 20 has run out by then' : `1 run in 20 ends below ${formatMoney(at(portfolioBands.p5))}`}; 1 in 20 ends above ${formatMoney(at(portfolioBands.p95))}.`)),
+      h('div', { class: 'card stat' }, h('h3', {}, 'Lifetime tax paid'), h('p', { class: 'big' }, formatMoney(r.taxPaidTotal.median)),
+        h('p', { class: 'muted' }, `Median, today’s money. 10th–90th percentile: ${formatMoney(r.taxPaidTotal.p10)} – ${formatMoney(r.taxPaidTotal.p90)}.`))),
+    r.warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Warnings'), h('ul', { class: 'warning-list' }, ...r.warnings.map((w) => h('li', {}, w)))) : null,
+    fan.el, hasProperty ? nw.el : null, dep.el, inc.el, tax.el,
+    h('section', { class: 'panel-section' },
+      h('div', { class: 'section-head' }, h('h3', {}, 'Central case (mean assumptions, no volatility)'),
+        h('button', { type: 'button', class: 'btn small', onclick: () => downloadText('central-case.csv', 'text/csv', centralCsv(rows)) }, 'Download CSV')),
+      h('p', { class: 'muted' }, `One deterministic run using the average return and inflation every year, in today’s money. Useful for checking the model by hand.${cols.length < CENTRAL_COLUMNS.length ? ' Columns that are always zero are hidden here but included in the CSV.' : ''}`),
+      table),
+    h('p', { class: 'muted small' }, `Seed ${r.meta.seed} · ${r.runs.toLocaleString('en-GB')} runs · ${Math.round(r.meta.durationMs)} ms · defaults ${r.meta.defaultsVersion}`));
+
+  // Draw charts after the element is attached (canvas sizes are reserved in CSS, so no layout shift).
+  requestAnimationFrame(() => {
+    const ages = r.ages;
+    void fanChart(fan.canvas, ages, portfolioBands, moneyLabel, portfolioCap);
+    if (hasProperty) void fanChart(nw.canvas, ages, netWorthBands, moneyLabel, netWorthCap);
+    void percentLine(dep.canvas, ages, runOut, 'Run out of money', 'Runs out of money (%)');
+    void stackedBars(inc.canvas, ages, r.incomeBySourceMeanReal, r.fundedShareByAge);
+    void barChart(tax.canvas, ages, r.taxPaidByAgeMeanReal, 'Tax paid', '£ per year (today’s money)', true);
+  });
+  return el;
+}
