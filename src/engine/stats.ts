@@ -75,9 +75,11 @@ export function findMaxSustainableSpend(scenario: Scenario, config: ConfigBundle
 /** Most simulations the max-spend search runs: both bounds, then the bisection. */
 export const MAX_SPEND_STEPS = 2 + MAX_SPEND_ITERATIONS;
 
-export function* maxSpendSteps(scenario: Scenario, config: ConfigBundle, target: number, deps: { simulate: SimulateFn }): Generator<number, MaxSpendOutcome> {
+export function* maxSpendSteps(scenario: Scenario, config: ConfigBundle, target: number, deps: { simulate: SimulateFn },
+  opts: { runs?: number; iterations?: number } = {}): Generator<number, MaxSpendOutcome> {
   const fixed: Scenario = { ...scenario, strategy: { kind: 'fixedReal' } };
-  const runs = Math.min(scenario.sim.runs, MAX_SPEND_RUNS);
+  const runs = Math.min(scenario.sim.runs, opts.runs ?? MAX_SPEND_RUNS);
+  const bisections = opts.iterations ?? MAX_SPEND_ITERATIONS;
   const iterations: MaxSpendOutcome['iterations'] = [];
   const rate = (multiplier: number) => {
     const r = deps.simulate(fixed, config, { spendMultiplier: multiplier, runsOverride: runs, successOnly: true }).successRate;
@@ -106,7 +108,7 @@ export function* maxSpendSteps(scenario: Scenario, config: ConfigBundle, target:
   }
   let lo = MAX_SPEND_LOWER;
   let hi = MAX_SPEND_UPPER;
-  for (let k = 0; k < MAX_SPEND_ITERATIONS; k++) {
+  for (let k = 0; k < bisections; k++) {
     const mid = (lo + hi) / 2;
     if (rate(mid) >= target) lo = mid; else hi = mid;
     yield ++done;

@@ -7,7 +7,8 @@ import { formatMoney, formatPct } from './format';
 import { ageAt, isIsoDate } from '../model/dates';
 import { defaultStatePensionStartAge, minimumPensionAccessAge, statePensionAge } from '../model/ageRules';
 import { ACCOUNT_TYPES, MIN_HISTORY_ROWS, SURPLUS_ACCOUNT_TYPES } from '../model/validateScenario';
-import { EXAMPLE_SCENARIOS, starterScenario } from './exampleScenarios';
+import { EXAMPLE_SCENARIOS } from './exampleScenarios';
+import { quickStartSection } from './quickStart';
 import { keyFacts, verdictBlock } from './verdict';
 
 export interface TabCtx { store: Store; rerender: () => void }
@@ -67,9 +68,11 @@ export function describeScenario(s: Scenario): string[] {
   const names = s.people.map((p, i) => p.name || `Person ${i + 1}`);
   s.people.forEach((p, i) => {
     const age = startAge(s, i);
+    // "You" (the quick start's name) takes "earn"/"are", not "earns"/"is".
+    const you = names[i] === 'You';
     const work = p.salary > 0 && age !== undefined && age < p.retirementAge
-      ? `earns ${formatMoney(p.salary)} a year and stops work at ${p.retirementAge}`
-      : 'is not working';
+      ? `${you ? 'earn' : 'earns'} ${formatMoney(p.salary)} a year and ${you ? 'stop' : 'stops'} work at ${p.retirementAge}`
+      : `${you ? 'are' : 'is'} not working`;
     out.push(`${names[i]}${age !== undefined ? `, aged ${age},` : ''} ${work}, with ${p.niQualifyingYears} NI qualifying years.`);
   });
   const byType = new Map<AccountType, number>();
@@ -88,11 +91,16 @@ export function describeScenario(s: Scenario): string[] {
         : `in retirement, spending is ${formatPct(st.pct)} of the portfolio, kept between ${formatMoney(st.floor)} and ${formatMoney(st.ceiling)}`;
   out.push(`Strategy: ${strat}. Accounts are drawn in this order: ${s.withdrawalOrder.map((t) => SHORT_LABEL[t]).join(' → ')}.`);
   out.push(`Spare income (left after spending, tax and saving) is ${surplusDescription(s)}.`);
-  out.push(`The model runs ${s.sim.runs.toLocaleString('en-GB')} simulations until ${names[0]} is ${s.sim.horizonAge}.`);
+  out.push(`The model runs ${s.sim.runs.toLocaleString('en-GB')} simulations until ${names[0] === 'You' ? 'you are' : `${names[0]} is`} ${s.sim.horizonAge}.`);
   return out;
 }
 
 /** Where a scenario validation path lives in the UI: the tab and a readable name for the item. */
+/** "your" for a one-person plan, else "Sam’s" (person 1's name), for phrases about person 1. */
+function firstPersons(s: Scenario): string {
+  return s.people.length > 1 ? `${s.people[0]?.name || 'person 1'}’s` : 'your';
+}
+
 /** Plain-English destination for spare income, e.g. "kept as cash savings". */
 export function surplusDescription(s: Scenario): string {
   const r = s.surplus ?? { kind: 'cash' };
@@ -109,7 +117,7 @@ function surplusSection(c: TabCtx): HTMLElement {
   const value = r.kind === 'invest' ? `invest:${r.accountId}` : r.kind;
   const targets = s.accounts.filter((a) => SURPLUS_ACCOUNT_TYPES.includes(a.type));
   return h('section', { class: 'panel-section' }, h('h3', {}, 'Spare income'),
-    h('p', { class: 'muted' }, 'In years when income is more than spending, tax, mortgage and the contributions you set up, the difference has to go somewhere. Results → Central case shows how much there is each year (“Spare income”).'),
+    h('p', { class: 'muted' }, 'In years when income is more than spending, tax, mortgage and the contributions you set up, the difference has to go somewhere. Results → Year by year shows how much there is each year (“Spare income”).'),
     h('div', { class: 'grid' }, wide(selectField({
       label: 'What happens to spare income', value, errorPath: 'surplus',
       help: 'Keeping it as cash is the default. If in real life you spend it, choose “Treat it as spent” (or raise your spending); if you invest it, choose the account. An ISA takes it only up to what is left of the owner’s allowance after their contributions; the rest goes to their GIA, or cash.',
@@ -160,15 +168,18 @@ export function renderOverview(c: TabCtx): HTMLElement {
     h('h4', {}, title), h('p', { class: 'muted' }, description),
     confirmButton('Load', 'Replace my scenario', () => { load(); c.rerender(); }));
   return h('div', {},
-    h('section', { class: 'panel-section' }, h('h2', {}, 'Your plan at a glance'), headline,
-      h('p', { class: 'row-btns' }, h('a', { href: '#/results', class: 'btn primary' }, 'See full results →'), h('a', { href: '#/people', class: 'btn' }, 'Edit your details'))),
-    issues.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Problems to fix'), h('ul', { class: 'error-list' }, ...issues), moreIssues > 0 ? h('p', { class: 'muted' }, `…and ${moreIssues} more, highlighted on their tabs.`) : null) : null,
-    warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Things to know'), h('ul', { class: 'warning-list' }, ...warnings)) : null,
+    // Results arriving refresh only this part (data-live), so typing in the quick start is not lost.
+    h('div', { 'data-live': 'overview' },
+      h('section', { class: 'panel-section' }, h('h2', {}, 'Your plan at a glance'), headline,
+        h('p', { class: 'row-btns' }, h('a', { href: '#/results', class: 'btn primary' }, 'See full results →'), h('a', { href: '#/people', class: 'btn' }, 'Edit your details'))),
+      issues.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Problems to fix'), h('ul', { class: 'error-list' }, ...issues), moreIssues > 0 ? h('p', { class: 'muted' }, `…and ${moreIssues} more, highlighted on their tabs.`) : null) : null,
+      warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Things to know'), h('ul', { class: 'warning-list' }, ...warnings)) : null),
+    // Open on a first visit (the example plan is showing) or when linked to directly.
+    quickStartSection(c.store, st.notices.some((n) => n.id === 'welcome') || location.hash.includes('quickstart'), c.rerender),
     h('section', { class: 'panel-section' }, h('h3', {}, 'Your scenario in words'), h('ul', { class: 'scenario-list' }, ...describeScenario(s).map((t) => h('li', {}, t)))),
-    h('section', { class: 'panel-section', id: 'examples' }, h('h3', {}, 'Start again from a template or example'),
+    h('section', { class: 'panel-section', id: 'examples' }, h('h3', {}, 'Or load an example'),
       h('p', { class: 'muted' }, 'Replaces your current scenario (your rules and assumptions are kept). Export first if you want to keep it.'),
       h('div', { class: 'examples' },
-        replaceCard('Simple template', 'One person aged 40 with a salary, a workplace pension and some cash. Replace the placeholder figures with your own.', () => c.store.replaceScenario(starterScenario())),
         ...EXAMPLE_SCENARIOS.map((ex) => replaceCard(ex.name, ex.description, () => c.store.loadExample(ex.id))))));
 }
 
@@ -303,12 +314,20 @@ function accountFields(c: TabCtx, a: Account, i: number): Node[] {
       title: `Equities ${formatPct(p.allocation.equities)}, bonds ${formatPct(p.allocation.bonds)}, cash ${formatPct(p.allocation.cash)}`,
       onclick: () => { setS(c, `${pre}.allocation`, { ...p.allocation }); c.rerender(); },
     }, p.label)));
+  // A preset needs no numbers on screen: the four percentages fold away unless the mix is custom or wrong.
+  const preset = ALLOCATION_PRESETS.find((p) => sameAllocation(al, p.allocation));
+  const allocError = c.store.getState().scenarioErrors.some((e) => e.path.startsWith(`${pre}.allocation`));
+  const mixText = (['equities', 'bonds', 'cash', 'property'] as const).filter((k) => al[k] > 0)
+    .map((k) => `${k === 'property' ? 'property funds' : k} ${formatPct(al[k])}`).join(', ');
   const alloc = h('fieldset', { class: 'allocation full' }, h('legend', {}, 'Investment mix'), presetRow,
-    ...(['equities', 'bonds', 'cash', 'property'] as const).map((k) => numberField({
-      label: k === 'property' ? 'Property funds' : k[0].toUpperCase() + k.slice(1), unit: 'pct', min: 0, max: 1, step: 0.01, value: al[k],
-      onChange: (v) => { setS(c, `${pre}.allocation.${k}`, v ?? 0); const tot = document.getElementById(`alloc-sum-${i}`); const cur = sc(c).accounts[i]?.allocation; if (tot && cur) tot.textContent = `Total ${formatPct(cur.equities + cur.bonds + cur.cash + cur.property)}`; },
-    })),
-    h('p', { class: 'muted', id: `alloc-sum-${i}`, 'aria-live': 'polite' }, `Total ${formatPct(sum)}`),
+    h('details', { class: 'alloc-custom', open: !preset || allocError },
+      h('summary', {}, preset ? `${preset.label}: ${mixText}. Set your own percentages` : 'Your own percentages'),
+      h('div', { class: 'alloc-grid' },
+        ...(['equities', 'bonds', 'cash', 'property'] as const).map((k) => numberField({
+          label: k === 'property' ? 'Property funds' : k[0].toUpperCase() + k.slice(1), unit: 'pct', min: 0, max: 1, step: 0.01, value: al[k],
+          onChange: (v) => { setS(c, `${pre}.allocation.${k}`, v ?? 0); const tot = document.getElementById(`alloc-sum-${i}`); const cur = sc(c).accounts[i]?.allocation; if (tot && cur) tot.textContent = `Total ${formatPct(cur.equities + cur.bonds + cur.cash + cur.property)}`; },
+        })),
+        h('p', { class: 'muted', id: `alloc-sum-${i}`, 'aria-live': 'polite' }, `Total ${formatPct(sum)}`))),
     errorSlot(`${pre}.allocation`));
   fields.push(alloc);
   if (a.type === 'gia') {
@@ -556,12 +575,18 @@ export function renderSpending(c: TabCtx): HTMLElement {
   const ageNow = startAge(s, 0);
 
   return h('div', {},
+    h('section', { class: 'panel-section' }, h('h3', {}, 'Your goal'),
+      h('p', { class: 'muted' }, 'How long the money needs to last, and how sure you want to be.'),
+      h('div', { class: 'grid' },
+        numberField({ label: 'Money lasts to age', unit: 'age', min: 1, max: 120, step: 1, value: s.sim.horizonAge, errorPath: 'sim.horizonAge', help: `${s.people.length > 1 ? `${s.people[0]?.name || 'Person 1'}’s age. ` : ''}There is no life-expectancy model, so pick an age you would be happy to plan to; 95 is a common choice.`, onChange: (v) => setS(c, 'sim.horizonAge', v ?? 0) }),
+        numberField({ label: 'Target chance', unit: 'pct', min: 0.01, max: 0.99, step: 0.01, value: s.sim.targetSuccessRate, errorPath: 'sim.targetSuccessRate', help: 'The chance of the money lasting that you are aiming for. Used for max sustainable spend, the earliest stop-work age and “Money lasts”.', onChange: (v) => setS(c, 'sim.targetSuccessRate', v ?? 0) }))),
     list(c, {
       title: 'Spending plan', path: 'spending', items: s.spending,
-      intro: `Household living costs in today’s money, for every year from now, working and retired. Excludes mortgage payments and property running costs (added separately). The first phase must start at or before ${s.people[0]?.name || 'person 1'}’s current age${ageNow !== undefined ? ` (${ageNow})` : ''}.`,
+      intro: `Household living costs in today’s money, for every year from now, working and retired. Excludes mortgage payments and property running costs (added separately). Add a phase if spending changes later, e.g. less once the children leave home or in your late 70s.`,
       heading: (ph, i) => (i === 0 ? 'From now' : `From age ${ph.fromAge}`),
       body: (ph, i) => [
-        numberField({ label: 'From age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: ph.fromAge, errorPath: `spending[${i}].fromAge`, onChange: (v) => setS(c, `spending[${i}].fromAge`, v ?? 0) }),
+        // The first phase starts now, so its age is shown only if it needs fixing.
+        ...(i === 0 && ageNow !== undefined && ph.fromAge <= ageNow ? [] : [numberField({ label: 'From age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: ph.fromAge, errorPath: `spending[${i}].fromAge`, onChange: (v) => setS(c, `spending[${i}].fromAge`, v ?? 0) })]),
         numberField({ label: 'Spending per year', unit: 'gbp', min: 0, step: 500, value: ph.annualSpend, errorPath: `spending[${i}].annualSpend`, help: 'Living costs in today’s money. Leave out mortgage payments and property running costs: they are entered under Property and paid on top.', onChange: (v) => setS(c, `spending[${i}].annualSpend`, v ?? 0) }),
       ],
       canRemove: () => s.spending.length > 1,
@@ -569,7 +594,7 @@ export function renderSpending(c: TabCtx): HTMLElement {
       addLabel: 'Add phase',
     }),
     h('section', { class: 'panel-section' }, h('h3', {}, 'Retirement withdrawal strategy'),
-      h('p', { class: 'muted' }, `Applies from ${s.people[0]?.name || 'person 1'}’s stop-work age (${s.people[0]?.retirementAge ?? '—'}). Before then every strategy follows the spending plan.`),
+      h('p', { class: 'muted' }, `Applies from ${firstPersons(s)} stop-work age (${s.people[0]?.retirementAge ?? '—'}). Before then every strategy follows the spending plan.`),
       h('div', { class: 'grid' },
         wide(selectField({ label: 'Strategy', value: s.strategy.kind, options: (Object.keys(STRATEGY_LABEL) as WithdrawalStrategy['kind'][]).map((k) => ({ value: k, label: STRATEGY_LABEL[k] })),
           onChange: (k) => { setS(c, 'strategy', STRATEGY_DEFAULTS[k]); c.rerender(); } })),
@@ -585,13 +610,13 @@ export function renderSpending(c: TabCtx): HTMLElement {
           h('button', { type: 'button', class: 'btn small', id: `order-${t}-down`, disabled: i === order.length - 1, 'aria-label': `Move ${ACCOUNT_LABEL[t]} down`, onclick: () => move(i, 1) }, '↓'),
           h('button', { type: 'button', class: 'btn small ghost', 'aria-label': `Remove ${ACCOUNT_LABEL[t]} from the order`, onclick: () => { setS(c, 'withdrawalOrder', order.filter((x) => x !== t)); c.rerender(); } }, '✕'))))),
       missing.length > 0 ? h('div', { class: 'adders' }, h('span', { class: 'muted' }, 'Add: '), ...missing.map((t) => h('button', { type: 'button', class: 'btn small', onclick: () => { setS(c, 'withdrawalOrder', [...order, t]); c.rerender(); } }, `+ ${SHORT_LABEL[t]}`))) : null),
-    h('section', { class: 'panel-section' }, h('h3', {}, 'Simulation settings'),
+    h('details', { class: 'panel-section advanced', id: 'simulation', open: st.scenarioErrors.some((e) => e.path.startsWith('sim.')) }, h('summary', {}, h('h3', {}, 'Advanced: simulation settings')),
+      h('p', { class: 'muted' }, 'How many futures are simulated and how. The defaults suit most plans.'),
       h('div', { class: 'grid' },
         numberField({ label: 'Number of simulations', unit: 'count', min: 1, max: 100000, step: 100, value: s.sim.runs, errorPath: 'sim.runs', help: 'More runs give smoother results but take longer. 5,000 is a good default.', onChange: (v) => setS(c, 'sim.runs', Math.round(v ?? 0)) }),
         h('div', { class: 'field' },
           numberField({ label: 'Random seed', unit: 'count', step: 1, value: s.sim.seed, errorPath: 'sim.seed', help: 'The same seed always gives the same results, so you can compare changes fairly.', onChange: (v) => setS(c, 'sim.seed', Math.round(v ?? 0)) }),
           h('button', { type: 'button', class: 'btn small', onclick: () => { setS(c, 'sim.seed', randomSeed()); c.rerender(); } }, 'New random seed')),
-        numberField({ label: 'Plan until age (person 1)', unit: 'age', min: 1, max: 120, step: 1, value: s.sim.horizonAge, errorPath: 'sim.horizonAge', help: 'There is no mortality model: pick an age you want the money to last to.', onChange: (v) => setS(c, 'sim.horizonAge', v ?? 0) }),
         textField({ label: 'Start date', type: 'date', value: s.sim.startDate, errorPath: 'sim.startDate', help: 'The simulation starts in the tax year containing this date.', onChange: (v) => setS(c, 'sim.startDate', v) }),
         wide(selectField({ label: 'Return model', value: s.sim.returnModel, errorPath: 'sim.returnModel',
           help: histOk ? 'Lognormal uses your market assumptions. Bootstrap resamples 5-year blocks of your pasted history.' : `Bootstrap needs at least ${MIN_HISTORY_ROWS} years of historical returns: paste them in Rules & Assumptions > Historical returns.`,
@@ -601,6 +626,6 @@ export function renderSpending(c: TabCtx): HTMLElement {
           help: 'Annual: all cash flows on 6 April each year, then a year of returns (fast, slightly conservative). Monthly: flows and returns every month, tax settled at the end of each tax year (about 5x slower).',
           options: [{ value: '1', label: 'Annual (faster)' }, { value: '12', label: 'Monthly (more precise timing)' }],
           onChange: (v) => setS(c, 'sim.stepsPerYear', v === '12' ? 12 : 1) }),
-        numberField({ label: 'Target success rate', unit: 'pct', min: 0.01, max: 0.99, step: 0.01, value: s.sim.targetSuccessRate, errorPath: 'sim.targetSuccessRate', help: 'The chance of the money lasting that you are aiming for. Used for max sustainable spend, the earliest stop-work age and “Money lasts”.', onChange: (v) => setS(c, 'sim.targetSuccessRate', v ?? 0) }))));
+      )));
 }
 

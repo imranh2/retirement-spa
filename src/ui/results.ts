@@ -29,7 +29,7 @@ const CENTRAL_COLUMNS: { key: keyof CentralCaseRow; label: string }[] = [
   { key: 'age', label: 'Age' }, { key: 'taxYear', label: 'Tax year' },
   { key: 'salary', label: 'Salary' }, { key: 'statePension', label: 'State Pension' }, { key: 'otherIncome', label: 'Other income' }, { key: 'rentalIncome', label: 'Rent' },
   { key: 'drawCash', label: 'From cash' }, { key: 'drawGia', label: 'From GIA' }, { key: 'drawIsa', label: 'From ISA' }, { key: 'drawLisa', label: 'From LISA' }, { key: 'drawPension', label: 'From pensions' },
-  { key: 'spending', label: 'Spending' }, { key: 'mortgagePayments', label: 'Mortgage' }, { key: 'propertyCosts', label: 'Property costs' },
+  { key: 'spending', label: 'Spending' }, { key: 'mortgagePayments', label: 'Mortgage' }, { key: 'mortgageInterest', label: 'of which interest' }, { key: 'propertyCosts', label: 'Property costs' },
   { key: 'taxPaid', label: 'Income tax + CGT' }, { key: 'niPaid', label: 'NI' },
   { key: 'savedFromPay', label: 'Saved from pay' }, { key: 'spareIncome', label: 'Spare income' },
   { key: 'portfolioEnd', label: 'Portfolio (end)' }, { key: 'propertyEquityEnd', label: 'Property equity (end)' }, { key: 'mortgageBalanceEnd', label: 'Mortgage left (end)' },
@@ -167,15 +167,12 @@ export function renderResults(c: ResultsCtx): HTMLElement {
   const tax = chartBox('Tax paid by age', 'chart-tax', 'Average income tax, NI and CGT per year in today’s money, over runs that still met spending in full that year.');
 
   const maxSpend = st.maxSpend;
-  const maxCard = h('div', { class: 'card stat' },
-    h('h3', {}, `Max sustainable spend at ${Math.round(target * 100)}% success`),
-    maxSpend
-      ? h('div', {}, h('p', { class: 'big' }, `${formatMoney(maxSpend.annualSpendReal)} a year`),
-        h('p', { class: 'muted' }, `Living costs only${extra ? `: your ${extra} are paid on top` : ''}. ${s.spending.length > 1 ? `This is your spending now, with every phase of your plan scaled to ${formatPct(maxSpend.multiplier)}` : `That is ${formatPct(maxSpend.multiplier)} of your planned spending`}, spent as a fixed amount rising with inflation (whatever strategy you chose).`),
-        ...maxSpend.warnings.map((w) => h('p', { class: 'warning' }, w)))
-      : h('p', { class: 'muted' }, stale ? 'Waiting for the current run…' : st.status === 'done' && st.runError ? `Could not work this out: ${st.runError}` : st.status === 'done' ? 'Working it out (this re-runs the simulation several times)…' : '—'));
 
   const rows = r.centralCase;
+  // The central run stops in the year the money runs out; say so rather than let the table just end.
+  const lastRow = rows[rows.length - 1];
+  const runsOut = lastRow !== undefined && lastRow.age < s.sim.horizonAge - 1 ? lastRow : undefined;
+  const hasMortgage = rows.some((row) => row.mortgagePayments > 0);
   const cols = visibleColumns(rows);
   const table = h('div', { class: 'table-wrap tall', tabindex: 0, role: 'region', 'aria-label': 'Central case table' }, h('table', { class: 'data-table sticky-first' },
     h('thead', {}, h('tr', {}, ...cols.map((col) => h('th', { scope: 'col' }, col.label)))),
@@ -186,23 +183,25 @@ export function renderResults(c: ResultsCtx): HTMLElement {
 
   const el = h('div', { class: stale ? 'results stale' : 'results' },
     h('div', { class: 'results-head' }, h('h2', {}, 'Results'), toggle),
+    h('nav', { class: 'jump-links', 'aria-label': 'Sections of the results' },
+      ...[['Summary', 'summary'], ['What if?', 'whatif'], ['Charts', 'charts'], ['Year by year', 'year-by-year']].map(([label, id]) => h('a', { href: `#/results/${id}` }, label))),
     progressSlot(c.store),
     statusMsg,
     stale ? h('p', { class: 'muted' }, 'Updating… the figures below are from the previous run.') : null,
-    h('section', { class: 'panel-section' }, verdictBlock(r, s, maxSpend, stale ? null : 'Working out how much you could spend…'), keyFacts(r, s, st.retireAge, !stale && st.status === 'done')),
+    h('section', { class: 'panel-section', id: 'summary' }, verdictBlock(r, s, maxSpend, stale ? null : 'Working out how much you could spend…'), keyFacts(r, s, st.retireAge, !stale && st.status === 'done')),
     whatIfPanel(c.store, r),
     h('div', { class: 'stats' },
-      maxCard,
       h('div', { class: 'card stat' }, h('h3', {}, `Portfolio at age ${s.sim.horizonAge}`), h('p', { class: 'big' }, formatMoney(at(portfolioBands.p50))),
         h('p', { class: 'muted' }, `Savings and investments (not property), typical (median) outcome, ${realMode ? 'today’s money' : 'nominal'}. ${at(portfolioBands.p5) < 1 ? 'At least 1 run in 20 has run out by then' : `1 run in 20 ends below ${formatMoney(at(portfolioBands.p5))}`}; 1 in 20 ends above ${formatMoney(at(portfolioBands.p95))}.`)),
       h('div', { class: 'card stat' }, h('h3', {}, 'Lifetime tax paid'), h('p', { class: 'big' }, formatMoney(r.taxPaidTotal.median)),
         h('p', { class: 'muted' }, `Income tax, NI and CGT for the whole plan. Median, today’s money. 10th–90th percentile: ${formatMoney(r.taxPaidTotal.p10)} – ${formatMoney(r.taxPaidTotal.p90)}.`))),
     r.warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Warnings'), h('ul', { class: 'warning-list' }, ...r.warnings.map((w) => h('li', {}, w)))) : null,
-    fan.el, hasProperty ? nw.el : null, dep.el, inc.el, tax.el,
-    h('section', { class: 'panel-section' },
-      h('div', { class: 'section-head' }, h('h3', {}, 'Central case (mean assumptions, no volatility)'),
+    h('div', { id: 'charts' }, fan.el), hasProperty ? nw.el : null, dep.el, inc.el, tax.el,
+    h('section', { class: 'panel-section', id: 'year-by-year' },
+      h('div', { class: 'section-head' }, h('h3', {}, 'Year by year (central case: average returns, no ups and downs)'),
         h('button', { type: 'button', class: 'btn small', onclick: () => downloadText('central-case.csv', 'text/csv', centralCsv(rows)) }, 'Download CSV')),
-      h('p', { class: 'muted' }, `One deterministic run using the average return and inflation every year, in today’s money. Useful for checking the model by hand: income plus withdrawals covers spending, mortgage, property costs, tax, NI and “Saved from pay”; anything left is “Spare income”, which is ${surplusDescription(s)}.${cols.length < CENTRAL_COLUMNS.length ? ' Columns that are always zero are hidden here but included in the CSV.' : ''}`),
+      h('p', { class: 'muted' }, `One deterministic run using the average return and inflation every year, in today’s money. Useful for checking the model by hand: income plus withdrawals covers spending, mortgage, property costs, tax, NI and “Saved from pay”; anything left is “Spare income”, which is ${surplusDescription(s)}.${hasMortgage ? ' Mortgage payments are fixed in pounds, so in today’s money they look smaller each year as prices rise; “of which interest” shows how much of each year’s payments is interest, which falls as the balance is paid down.' : ''}${cols.length < CENTRAL_COLUMNS.length ? ' Columns that are always zero are hidden here but included in the CSV.' : ''}`),
+      runsOut ? h('p', { class: 'warning' }, `With average returns the money runs out at age ${runsOut.age}, so the table stops there.${runsOut.mortgageBalanceEnd >= 1 ? ` The mortgage still had ${formatMoney(runsOut.mortgageBalanceEnd)} left to pay (today’s money).` : ''} Later years are not shown because the plan can no longer pay its way.`) : null,
       table),
     h('p', { class: 'muted small' }, `Seed ${r.meta.seed} · ${r.runs.toLocaleString('en-GB')} runs · ${Math.round(r.meta.durationMs)} ms · defaults ${r.meta.defaultsVersion}`));
 

@@ -16,7 +16,7 @@ import { emptyByType, executeWithdrawals, householdNeed, phaseSpend, targetSpend
 import { earliestRetirementSteps } from './retireAge';
 import type { RetireAgeOutcome } from '../model/retirement';
 import { depletionHistogram, MAX_SPEND_STEPS, maxSpendSteps, percentile, percentileBands, successRate, type MaxSpendOutcome } from './stats';
-import { MONTHS_PER_YEAR, SHORTFALL_TOLERANCE_GBP } from './constants';
+import { MONTHS_PER_YEAR, QUICK_SPEND_ITERATIONS, QUICK_SPEND_RUNS, SHORTFALL_TOLERANCE_GBP } from './constants';
 
 export { percentile } from './stats';
 
@@ -78,7 +78,7 @@ interface YearRecord {
   indexEnd: number;
   salary: number; statePension: number; otherIncome: number; rental: number;
   draws: ByType;
-  spending: number; mortgagePayments: number; propertyCosts: number;
+  spending: number; mortgagePayments: number; mortgageInterest: number; propertyCosts: number;
   incomeTax: number; ni: number; cgt: number;
   savedFromPay: number; spareIncome: number;
   portfolioEnd: number; propertyEquityEnd: number; mortgageBalanceEnd: number;
@@ -215,6 +215,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     // Property events: downsize, last year's mortgage lump sums, this year's mortgage schedule
     const balances = [...ws.balances];
     let mortgagePayments = 0;
+    let mortgageInterest = 0;
     let lumpSums = 0;
     let propertyCosts = 0;
     let downsizeShortfall = 0;
@@ -237,6 +238,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       if (m && !monthly) {
         const y = scheduleYear(m);
         mortgagePayments += y.payments;
+        mortgageInterest += y.interest;
         if (y.lumpSumDue > 0) { pendingLump[pi] = y.lumpSumDue; flags.mortgageLumpSum = true; }
         mort[pi] = y.endBalance > 0 ? y.endState : null;
       }
@@ -411,6 +413,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
           if (!m) continue;
           const y = scheduleMonths(m, 1);
           mortgageMonth += y.payments;
+          mortgageInterest += y.interest;
           if (y.lumpSumDue > 0) { pendingLump[pi] = y.lumpSumDue; flags.mortgageLumpSum = true; }
           mort[pi] = y.endBalance > 0 ? y.endState : null;
         }
@@ -501,6 +504,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         draws,
         spending: W,
         mortgagePayments: mortgagePayments + lumpSums,
+        mortgageInterest,
         propertyCosts,
         incomeTax: incomeTaxTotal + extraTax,
         ni: niTotal,
@@ -644,6 +648,7 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
           drawPension: y.draws.dcPension / y.index,
           spending: y.spending / y.index,
           mortgagePayments: y.mortgagePayments / y.index,
+          mortgageInterest: y.mortgageInterest / y.index,
           propertyCosts: y.propertyCosts / y.index,
           taxPaid: (y.incomeTax + y.cgt) / y.index,
           niPaid: y.ni / y.index,
@@ -703,14 +708,14 @@ export function maxSustainableSpend(scenario: Scenario, config: ConfigBundle): M
 }
 
 /** maxSustainableSpend as a generator that yields between simulations (used by the worker). */
-export function* maxSustainableSpendSteps(scenario: Scenario, config: ConfigBundle): Generator<number, MaxSpendOutcome> {
+export function* maxSustainableSpendSteps(scenario: Scenario, config: ConfigBundle, opts: { runs?: number; iterations?: number } = {}): Generator<number, MaxSpendOutcome> {
   // The search runs ~16 simulations; with monthly steps that is slow, so it uses annual steps
   // (start-of-year cash flows, slightly more conservative) and says so.
   const monthly = scenario.sim.stepsPerYear === MONTHS_PER_YEAR;
   const s = monthly ? { ...scenario, sim: { ...scenario.sim, stepsPerYear: 1 as const } } : scenario;
   const out = yield* maxSpendSteps(s, config, scenario.sim.targetSuccessRate, {
     simulate: (sc, c, o) => simulate(sc, c, o),
-  });
+  }, opts);
   return monthly ? { ...out, warnings: [...out.warnings, 'Estimated with annual time steps for speed (slightly conservative compared with monthly).'] } : out;
 }
 
@@ -718,6 +723,11 @@ export function* maxSustainableSpendSteps(scenario: Scenario, config: ConfigBund
 export function* earliestRetirementAgeSteps(scenario: Scenario, config: ConfigBundle): Generator<number, RetireAgeOutcome> {
   const s = scenario.sim.stepsPerYear === MONTHS_PER_YEAR ? { ...scenario, sim: { ...scenario.sim, stepsPerYear: 1 as const } } : scenario;
   return yield* earliestRetirementSteps(s, config, { simulate: (sc, c, o) => simulate(sc, c, o) });
+}
+
+/** The quicker max-spend search for the what-if panel; yields between simulations. */
+export function quickMaxSpendSteps(scenario: Scenario, config: ConfigBundle): Generator<number, MaxSpendOutcome> {
+  return maxSustainableSpendSteps(scenario, config, { runs: QUICK_SPEND_RUNS, iterations: QUICK_SPEND_ITERATIONS });
 }
 
 /**

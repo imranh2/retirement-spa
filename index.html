@@ -106,7 +106,9 @@
       .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .75rem 1rem; }
       .grid .full, fieldset.full { grid-column: 1 / -1; }
       fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: .75rem; margin: 0; }
-      fieldset.allocation { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .5rem 1rem; }
+      fieldset.allocation .alloc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .5rem 1rem; margin-top: .5rem; }
+      .alloc-custom > summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+      .alloc-custom[open] > summary { color: var(--text); }
       legend { font-weight: 600; padding: 0 .3rem; }
 
       .field { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
@@ -209,6 +211,10 @@
       .whatif-value { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
       .whatif-out { background: var(--surface-2); border-radius: var(--radius); padding: .9rem 1rem; }
       .whatif-out p { margin: .5rem 0 0; }
+      .whatif-spend { margin-top: .75rem; padding: .75rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); }
+      .whatif-spend p { margin: 0; }
+      .whatif-spend p + p { margin-top: .4rem; }
+      .whatif-spend .btn { margin-left: .25rem; }
       .whatif-figure { display: flex; flex-wrap: wrap; gap: .25rem .6rem; align-items: baseline; padding-left: .75rem; }
       .whatif-figure .big { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
       .scenario-list { margin: 0; padding-left: 1.25rem; } .scenario-list li { margin-bottom: .4rem; }
@@ -220,11 +226,17 @@
       .sw { display: inline-block; width: 1.1rem; height: .7rem; border-radius: 2px; }
       .sw.outer { background: var(--band-outer); } .sw.inner { background: var(--band-inner); }
       .sw.median { height: 3px; background: var(--accent); }
-      details.config-section > summary { display: flex; align-items: center; gap: .75rem; cursor: pointer; list-style: none; }
-      details.config-section > summary::-webkit-details-marker { display: none; }
-      details.config-section > summary::before { content: '▸'; color: var(--muted); width: 1em; }
-      details.config-section[open] > summary::before { content: '▾'; }
-      details.config-section > summary h3 { margin: 0; }
+      details.config-section > summary, details.quick-start > summary, details.advanced > summary { display: flex; align-items: center; gap: .75rem; cursor: pointer; list-style: none; }
+      details.config-section > summary::-webkit-details-marker, details.quick-start > summary::-webkit-details-marker, details.advanced > summary::-webkit-details-marker { display: none; }
+      details.config-section > summary::before, details.quick-start > summary::before, details.advanced > summary::before { content: '▸'; color: var(--muted); width: 1em; }
+      details.config-section[open] > summary::before, details.quick-start[open] > summary::before, details.advanced[open] > summary::before { content: '▾'; }
+      details.config-section > summary h3, details.quick-start > summary h3, details.advanced > summary h3 { margin: 0; }
+      details.quick-start[open] > summary, details.advanced[open] > summary { margin-bottom: .5rem; }
+      details.quick-start { border-color: var(--accent); }
+      .quick-group { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem 1rem 1rem; margin: 0 0 1rem; }
+      .quick-group > legend { font-weight: 600; padding: 0 .35rem; }
+      .jump-links { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin: -.25rem 0 1rem; font-size: .95rem; }
+      #summary, #whatif, #charts, #year-by-year, #quickstart, #simulation { scroll-margin-top: 1rem; }
       details.config-section:not([open]) { padding-bottom: 1rem; }
       details.config-section[open] > summary { margin-bottom: .5rem; }
       .changed-count { color: var(--accent); font-size: .85rem; } .problem-count { color: var(--danger); font-size: .85rem; font-weight: 600; }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { earliestRetirementAgeSteps } from '../../src/engine/simulate';
+import { earliestRetirementAgeSteps, quickMaxSpendSteps } from '../../src/engine/simulate';
 import { withRetirementAge, type RetireAgeOutcome } from '../../src/model/retirement';
 import { zeroWorldConfig } from '../fixtures/testConfig';
 import { cashOnlyScenario, dobForAge } from '../fixtures/testScenarios';
@@ -48,5 +48,18 @@ describe('withRetirementAge', () => {
     expect(moved.people.map((p) => p.retirementAge)).toEqual([55, 53]);
     expect(withRetirementAge(s, 40).people[1].retirementAge).toBe(38);
     expect(s.people[0].retirementAge).toBe(60);   // input not mutated
+  });
+});
+
+describe('what can I spend if I stop work at a given age', () => {
+  it('quick max-spend search matches the hand calculation to within about 1% of planned spending', () => {
+    // Stop at 55: 15 working years save (50k - S) each and 6 retired years cost S each.
+    // 15 * (50k - S) >= 6S  =>  S <= 750k / 21 = £35,714.
+    const steps = quickMaxSpendSteps(withRetirementAge(worker(), 55), zeroWorldConfig());
+    let n = steps.next();
+    while (!n.done) n = steps.next();
+    const spend = n.value.value.annualSpendReal;
+    expect(spend).toBeLessThanOrEqual(750_000 / 21 + 1e-6);
+    expect(spend).toBeGreaterThan(750_000 / 21 - 0.01 * 30_000);
   });
 });

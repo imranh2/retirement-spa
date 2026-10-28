@@ -24,5 +24,8 @@ export const MAX_SPEND_LOWER = 0.1;
 export const MAX_SPEND_UPPER = 5.0;
 export const MAX_SPEND_ITERATIONS = 14;
 export const MAX_SPEND_RUNS = 1000;
+/** The quicker what-if version: fewer runs and iterations (to within about 1% of planned spending). */
+export const QUICK_SPEND_RUNS = 500;
+export const QUICK_SPEND_ITERATIONS = 9;
 /** Mortgage balances below this (GBP) are treated as repaid. */
 export const MORTGAGE_PAID_TOLERANCE_GBP = 0.01;

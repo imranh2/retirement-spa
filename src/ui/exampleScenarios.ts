@@ -1,13 +1,13 @@
 import type { AssetAllocation, Scenario } from '../model/types';
 import { addYears, todayIso } from '../model/dates';
 
-const GROWTH: AssetAllocation = { equities: 0.8, bonds: 0.15, cash: 0.05, property: 0 };
+export const GROWTH: AssetAllocation = { equities: 0.8, bonds: 0.15, cash: 0.05, property: 0 };
 const BALANCED: AssetAllocation = { equities: 0.6, bonds: 0.3, cash: 0.1, property: 0 };
-const CASH: AssetAllocation = { equities: 0, bonds: 0, cash: 1, property: 0 };
+export const CASH: AssetAllocation = { equities: 0, bonds: 0, cash: 1, property: 0 };
 
 export interface ExampleScenario { id: string; name: string; description: string; scenario: Scenario }
 
-function sim(startDate: string): Scenario['sim'] {
+export function sim(startDate: string): Scenario['sim'] {
   return { runs: 5000, seed: 20261027, horizonAge: 95, startDate, stepsPerYear: 1, returnModel: 'lognormal', targetSuccessRate: 0.9 };
 }
 
@@ -108,29 +108,3 @@ export function buildExamples(startDate: string = todayIso()): ExampleScenario[]
 }
 
 export const EXAMPLE_SCENARIOS: ExampleScenario[] = buildExamples();
-
-/**
- * A simple one-person template to edit from scratch: a 40-year-old employee with a workplace
- * pension and some cash. Every figure is a placeholder to replace with your own.
- */
-export function starterScenario(startDate: string = todayIso()): Scenario {
-  const START_AGE = 40;
-  const RETIRE_AT = 67;
-  return {
-    people: [{ name: 'You', dateOfBirth: addYears(startDate, -START_AGE), salary: 40000, salaryGrowthRealPct: 0, retirementAge: RETIRE_AT, niQualifyingYears: 18 }],
-    accounts: [
-      { id: 'cash', type: 'cash', name: 'Cash savings', ownerIndex: 0, balance: 10000, allocation: CASH, annualFeePct: 0 },
-      { id: 'pension', type: 'dcPension', name: 'Workplace pension', ownerIndex: 0, balance: 60000, allocation: GROWTH, annualFeePct: 0.004, pensionReliefMethod: 'netPay' },
-    ],
-    contributions: [
-      { id: 'c1', accountId: 'pension', personIndex: 0, type: 'pctOfSalary', amount: 0.05, startAge: 0, endAge: RETIRE_AT, escalatesWithInflation: false },
-      { id: 'c2', accountId: 'pension', personIndex: 0, type: 'employerPctOfSalary', amount: 0.03, startAge: 0, endAge: RETIRE_AT, escalatesWithInflation: false },
-    ],
-    properties: [],
-    incomeStreams: [],
-    spending: [{ fromAge: 0, annualSpend: 25000 }],
-    strategy: { kind: 'fixedReal' },
-    withdrawalOrder: ['cash', 'dcPension'],
-    sim: sim(startDate),
-  };
-}

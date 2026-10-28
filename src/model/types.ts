@@ -146,6 +146,7 @@ export interface CentralCaseRow {
   salary: number; statePension: number; otherIncome: number; rentalIncome: number;
   drawCash: number; drawGia: number; drawIsa: number; drawLisa: number; drawPension: number;
   spending: number; mortgagePayments: number; propertyCosts: number;
+  mortgageInterest?: number;         // the interest part of mortgagePayments
   taxPaid: number; niPaid: number;
   savedFromPay?: number;             // contributions paid from take-home pay (ISA, GIA, cash, personal pension)
   spareIncome?: number;              // income left over after everything; where it goes depends on Scenario.surplus

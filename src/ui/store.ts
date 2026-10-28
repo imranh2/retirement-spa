@@ -258,6 +258,11 @@ export class Store {
     return this.runner?.quick ? this.runner.quick(scenario, this.state.config) : Promise.resolve(null);
   }
 
+  /** Quick max sustainable spend for a variant of the scenario (null if superseded or unavailable). */
+  maxSpendAt(scenario: Scenario): Promise<MaxSpendValue | null> {
+    return this.runner?.maxSpendAt ? this.runner.maxSpendAt(scenario, this.state.config) : Promise.resolve(null);
+  }
+
   /** Cancel the run in progress. */
   cancelRun(): void {
     if (this.runTimer !== undefined) { clearTimeout(this.runTimer); this.runTimer = undefined; }

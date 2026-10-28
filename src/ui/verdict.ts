@@ -81,7 +81,7 @@ export function keyFacts(r: SimulationResult, s: Scenario, retireAge: RetireAgeV
     fact(`Money lasts (${Math.round(target * 100)}% of futures)`, `to age ${lastsLabel(sure)}`, sure.beyond ? `The money outlasts the plan in at least ${Math.round(target * 100)}% of futures.` : `In ${Math.round((1 - target) * 100)}% of futures it runs out before age ${sure.age + 1}.`),
     fact('Money lasts (typical future)', `to age ${lastsLabel(typical)}`, typical.beyond ? 'Half of futures still have money at the end of the plan.' : 'Half of futures have run out by this age.'),
     retire !== null || (retirePending && s.people[0] && s.people[0].retirementAge > (r.ages[0] ?? 0))
-      ? fact(s.people.length > 1 ? `Earliest stop-work age (${who})` : 'Earliest stop-work age', retire ?? 'working it out…', `With planned spending and a ${Math.round(target * 100)}% chance the money lasts.${s.people.length > 1 ? ' The other person’s stop-work age moves by the same number of years.' : ''} Explore it with the What if? sliders on Results.`)
+      ? fact(s.people.length > 1 ? `Earliest stop-work age (${who})` : 'Earliest stop-work age', retire ?? 'working it out…', `With planned spending and a ${Math.round(target * 100)}% chance the money lasts.${s.people.length > 1 ? ' The other person’s stop-work age moves by the same number of years.' : ''} Explore it with the What if? sliders.`)
       : null);
 }
 
@@ -96,6 +96,10 @@ export function verdictBlock(r: SimulationResult, s: Scenario, maxSpend: MaxSpen
       h('strong', { class: 'band-label' }, band.label)),
     h('div', { class: 'verdict-text' },
       v.spend ? h('p', { class: 'verdict-lead' }, v.spend) : pending ? h('p', { class: 'muted' }, pending) : null,
+      v.spend && (s.spending.length > 1 || s.strategy.kind !== 'fixedReal')
+        ? h('p', { class: 'muted small' }, `That figure is your spending now. It assumes ${s.spending.length > 1 ? 'every phase of your spending plan scales by the same amount and is ' : ''}spent as a fixed amount rising with inflation, whatever withdrawal strategy you chose.`)
+        : null,
+      ...(maxSpend?.warnings ?? []).map((w) => h('p', { class: 'warning small' }, w)),
       s.strategy.kind !== 'fixedReal'
         ? h('p', { class: 'small' }, 'With your withdrawal strategy, spending falls when investments do, so a future only counts as running out if it cannot cover fixed costs. Check “Where the money comes from” for how low spending gets.')
         : null,

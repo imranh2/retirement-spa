@@ -8,6 +8,7 @@ export type WorkerRequest =
   | { type: 'cancel'; requestId: number }
   | { type: 'quick'; requestId: number; scenario: Scenario; config: ConfigBundle }
   | { type: 'retire'; requestId: number; scenario: Scenario; config: ConfigBundle }
+  | { type: 'spend'; requestId: number; scenario: Scenario; config: ConfigBundle }
   | { type: 'ping' };
 
 export interface MaxSpendValue { multiplier: number; annualSpendReal: number; targetSuccessRate: number; warnings: string[] }
@@ -23,6 +24,7 @@ export type WorkerResponse =
   | { type: 'maxSpendProgress'; requestId: number; completed: number; total: number }
   | { type: 'maxSpend'; requestId: number; value: MaxSpendValue }
   | { type: 'retireAge'; requestId: number; value: RetireAgeValue }
+  | { type: 'spendResult'; requestId: number; value: MaxSpendValue }
   | { type: 'quickResult'; requestId: number; result: QuickResult }
   | { type: 'error'; requestId: number; message: string }
   | { type: 'cancelled'; requestId: number }

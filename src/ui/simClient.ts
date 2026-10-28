@@ -19,6 +19,8 @@ export interface SimRunner {
   quick?(scenario: Scenario, config: ConfigBundle): Promise<QuickResult | null>;
   /** Earliest stop-work age search on its own worker; superseded calls resolve to null. */
   retireAge?(scenario: Scenario, config: ConfigBundle): Promise<RetireAgeValue | null>;
+  /** Quick max-spend search for a what-if on its own worker; superseded calls resolve to null. */
+  maxSpendAt?(scenario: Scenario, config: ConfigBundle): Promise<MaxSpendValue | null>;
 }
 
 /**
@@ -35,36 +37,11 @@ export function createSimClient(): SimRunner & { ping(): Promise<boolean> } {
 
   const send = (msg: WorkerRequest) => worker.postMessage(msg);
 
-  // A second worker for what-if checks, so sliders stay responsive during a full run.
-  let quickWorker: Worker | undefined;
-  let nextQuickId = 1;
-  let pendingQuick: { id: number; resolve: (r: QuickResult | null) => void } | undefined;
-  // A third worker for the earliest stop-work age search, so it runs alongside the main run.
-  let retireWorker: Worker | undefined;
-  let nextRetireId = 1;
-  let pendingRetire: { id: number; resolve: (v: RetireAgeValue | null) => void } | undefined;
-  const createRetireWorker = () => {
-    const w = new Worker(new URL('../worker/simWorker.ts', import.meta.url), { type: 'module' });
-    w.onmessage = (e: MessageEvent<WorkerResponse>) => {
-      const msg = e.data;
-      if (msg.type === 'pong' || !pendingRetire || msg.requestId !== pendingRetire.id) return;
-      const p = pendingRetire;
-      pendingRetire = undefined;
-      p.resolve(msg.type === 'retireAge' ? msg.value : null);
-    };
-    return w;
-  };
-  const createQuickWorker = () => {
-    const w = new Worker(new URL('../worker/simWorker.ts', import.meta.url), { type: 'module' });
-    w.onmessage = (e: MessageEvent<WorkerResponse>) => {
-      const msg = e.data;
-      if (msg.type === 'pong' || !pendingQuick || msg.requestId !== pendingQuick.id) return;
-      const p = pendingQuick;
-      pendingQuick = undefined;
-      p.resolve(msg.type === 'quickResult' ? msg.result : null);
-    };
-    return w;
-  };
+  // Extra workers, each created on first use, so what-if checks and searches run alongside
+  // the main run: quick success checks, the earliest stop-work age, and the what-if max spend.
+  const quickWorker = latestOnlyWorker<QuickResult>((m) => (m.type === 'quickResult' ? m.result : null));
+  const retireWorker = latestOnlyWorker<RetireAgeValue>((m) => (m.type === 'retireAge' ? m.value : null));
+  const spendWorker = latestOnlyWorker<MaxSpendValue>((m) => (m.type === 'spendResult' ? m.value : null));
 
   worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
     const msg = e.data;
@@ -96,29 +73,44 @@ export function createSimClient(): SimRunner & { ping(): Promise<boolean> } {
       if (!active) return;
       send({ type: 'cancel', requestId: active });
     },
-    quick(scenario, config) {
-      quickWorker ??= createQuickWorker();
-      const id = nextQuickId++;
-      // Only the latest what-if matters: resolve any earlier pending one with null.
-      pendingQuick?.resolve(null);
-      return new Promise((resolve) => {
-        pendingQuick = { id, resolve };
-        quickWorker?.postMessage({ type: 'quick', requestId: id, scenario, config } satisfies WorkerRequest);
-      });
-    },
-    retireAge(scenario, config) {
-      retireWorker ??= createRetireWorker();
-      const id = nextRetireId++;
-      pendingRetire?.resolve(null);
-      return new Promise((resolve) => {
-        pendingRetire = { id, resolve };
-        retireWorker?.postMessage({ type: 'retire', requestId: id, scenario, config } satisfies WorkerRequest);
-      });
-    },
+    quick: (scenario, config) => quickWorker.request((requestId) => ({ type: 'quick', requestId, scenario, config })),
+    retireAge: (scenario, config) => retireWorker.request((requestId) => ({ type: 'retire', requestId, scenario, config })),
+    maxSpendAt: (scenario, config) => spendWorker.request((requestId) => ({ type: 'spend', requestId, scenario, config })),
     ping() {
       return new Promise((resolve) => {
         pongWaiters.push(resolve);
         send({ type: 'ping' });
+      });
+    },
+  };
+}
+
+/**
+ * A simulation worker, created on first request, where only the latest request matters:
+ * a new request resolves the previous pending one with null (the worker drops it too).
+ * `pick` takes the answer from the worker's reply, or null for an error.
+ */
+function latestOnlyWorker<T>(pick: (msg: WorkerResponse) => T | null) {
+  let worker: Worker | undefined;
+  let nextId = 1;
+  let pending: { id: number; resolve: (v: T | null) => void } | undefined;
+  return {
+    request(make: (requestId: number) => WorkerRequest): Promise<T | null> {
+      if (!worker) {
+        worker = new Worker(new URL('../worker/simWorker.ts', import.meta.url), { type: 'module' });
+        worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
+          const msg = e.data;
+          if (msg.type === 'pong' || !pending || msg.requestId !== pending.id) return;
+          const p = pending;
+          pending = undefined;
+          p.resolve(pick(msg));
+        };
+      }
+      const id = nextId++;
+      pending?.resolve(null);
+      return new Promise((resolve) => {
+        pending = { id, resolve };
+        worker?.postMessage(make(id));
       });
     },
   };

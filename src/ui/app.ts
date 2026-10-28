@@ -35,7 +35,7 @@ export function startApp(root: HTMLElement): Store {
   const header = h('header', { class: 'app-header' },
     h('div', { class: 'brand' }, h('h1', {}, 'UK Retirement Planner'), h('p', { class: 'muted' }, 'Monte Carlo planning for saving and drawing down, including early retirement.')),
     h('div', { class: 'header-actions' },
-      h('a', { href: '#/overview/examples', class: 'btn ghost' }, 'Examples'),
+      h('a', { href: '#/overview/quickstart', class: 'btn ghost' }, 'New plan'),
       h('button', { type: 'button', class: 'btn', title: 'Save your scenario and rules as a JSON file', onclick: () => { downloadText(`ukplanner-${store.getState().scenario.sim.startDate}.json`, 'application/json', store.exportJson()); } }, 'Export'),
       h('label', { for: 'import-file', class: 'btn', tabindex: 0, title: 'Load a JSON file saved with Export', onkeydown: (e: Event) => { const k = (e as KeyboardEvent).key; if (k === 'Enter' || k === ' ') { e.preventDefault(); fileInput.click(); } } }, 'Import'),
       fileInput));
@@ -114,6 +114,7 @@ export function startApp(root: HTMLElement): Store {
     notices.replaceChildren(...s.notices.map((n) => h('div', { class: `notice-bar ${n.kind}`, role: n.kind === 'error' ? 'alert' : 'status' },
       h('p', {}, n.text),
       n.id === 'defaults' ? h('a', { href: '#/rules', class: 'btn small' }, 'Review') : null,
+      n.id === 'welcome' ? h('a', { href: '#/overview/quickstart', class: 'btn small primary' }, 'Start with my numbers') : null,
       h('button', { type: 'button', class: 'btn small ghost', 'aria-label': 'Dismiss', onclick: () => store.dismissNotice(n.id) }, '✕'))));
   }
 
@@ -139,6 +140,15 @@ export function startApp(root: HTMLElement): Store {
     showErrors(panel, allIssues(store.getState()));
   }
 
+  /** Swap in fresh copies of the current tab's live parts ([data-live]), leaving forms alone. */
+  function refreshLive(): void {
+    const old = panel.querySelectorAll<HTMLElement>('[data-live]');
+    if (old.length === 0) { rerender(); return; }
+    const fresh = renderOverview({ store, rerender });
+    old.forEach((el) => { const n = fresh.querySelector(`[data-live="${el.dataset.live}"]`); if (n) el.replaceWith(n); });
+    showErrors(panel, allIssues(store.getState()));
+  }
+
   /** Rebuild the current tab (after structural edits), keeping the scroll position. */
   function rerender(): void {
     const y = window.scrollY;
@@ -155,7 +165,8 @@ export function startApp(root: HTMLElement): Store {
     showErrors(panel, allIssues(s));
     if (tab === 'rules') refreshModifiedDots(panel, store);
     const resultsChanged = s.results !== last.results || s.maxSpend !== last.maxSpend || s.retireAge !== last.retireAge || s.status !== last.status;
-    if (resultsChanged && (tab === 'results' || tab === 'overview')) rerender();
+    if (resultsChanged && tab === 'results') rerender();
+    if (resultsChanged && tab === 'overview') refreshLive();
     last = s;
   });
 
@@ -176,7 +187,7 @@ export function startApp(root: HTMLElement): Store {
   });
 
   if (store.firstVisit) {
-    store.addNotice({ id: 'welcome', kind: 'info', text: 'Welcome! You are looking at an example plan. Edit it tab by tab, or start from the simple template under Examples. Everything stays in this browser.' });
+    store.addNotice({ id: 'welcome', kind: 'info', text: 'Welcome! You are looking at an example plan. Start with your own numbers in two minutes, or explore the example first. Everything stays in this browser.' });
   }
   renderSummary(store.getState());
   renderNotices(store.getState());

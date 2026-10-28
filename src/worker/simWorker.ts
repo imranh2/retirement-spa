@@ -1,4 +1,4 @@
-import { createSimulation, earliestRetirementAgeSteps, MAX_SPEND_STEPS, maxSustainableSpendSteps, quickCheck } from '../engine/simulate';
+import { createSimulation, earliestRetirementAgeSteps, MAX_SPEND_STEPS, maxSustainableSpendSteps, quickCheck, quickMaxSpendSteps } from '../engine/simulate';
 import type { WorkerRequest, WorkerResponse } from '../model/workerMessages';
 
 /** Runs per chunk; the worker posts progress and checks for cancellation between chunks. */
@@ -13,6 +13,7 @@ const ctx = self as unknown as WorkerScope;
 const cancelled = new Set<number>();
 let latest = 0;
 let latestRetire = 0;
+let latestSpend = 0;
 
 function post(msg: WorkerResponse): void {
   ctx.postMessage(msg);
@@ -73,6 +74,22 @@ async function retire(req: Extract<WorkerRequest, { type: 'retire' }>): Promise<
   }
 }
 
+/** Quick max-spend search for the what-if panel; stops once a newer one is requested. */
+async function spend(req: Extract<WorkerRequest, { type: 'spend' }>): Promise<void> {
+  const { requestId, scenario, config } = req;
+  try {
+    const steps = quickMaxSpendSteps(scenario, config);
+    for (;;) {
+      await yieldToEvents();
+      if (requestId !== latestSpend) return;
+      const n = steps.next();
+      if (n.done) { post({ type: 'spendResult', requestId, value: { ...n.value.value, warnings: n.value.warnings } }); return; }
+    }
+  } catch (e) {
+    post({ type: 'error', requestId, message: e instanceof Error ? e.message : String(e) });
+  }
+}
+
 ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
   const msg = e.data;
   if (msg.type === 'ping') post({ type: 'pong' });
@@ -85,6 +102,9 @@ ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
   } else if (msg.type === 'retire') {
     latestRetire = msg.requestId;
     void retire(msg);
+  } else if (msg.type === 'spend') {
+    latestSpend = msg.requestId;
+    void spend(msg);
   } else if (msg.type === 'run') {
     latest = msg.requestId;
     void run(msg);
