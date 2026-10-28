@@ -70,3 +70,20 @@ describe('spare income', () => {
     expect(validateScenario(earner(50_000, { kind: 'invest', accountId: 'missing' }), TEST_CONFIG).map((i) => i.path)).toContain('surplus');
   });
 });
+
+describe('contributions after stopping work', () => {
+  it('are paid from savings when set to carry on, and the stop-work default follows a later retirement', () => {
+    const s = cashOnlyScenario({ startAge: 58, pot: 100_000, spend: 0, horizonYears: 4 });
+    s.people[0] = { ...s.people[0], salary: 40_000, retirementAge: 60 };
+    s.accounts.push(account('isa', 'isa', 0, { allocation: { equities: 0, bonds: 0, cash: 1, property: 0 } }));
+    s.surplus = { kind: 'spend' };
+    const isaTopUp = { id: 'c', accountId: 'isa', personIndex: 0, type: 'fixedMonthly' as const, amount: 1_000, startAge: 0, endAge: 62, escalatesWithInflation: false };
+    s.contributions = [{ ...isaTopUp, stopsWith: 'ageEvenAfterWork' }];
+    const rows = run(s);
+    expect(rows.map((r) => r.savedFromPay)).toEqual([12_000, 12_000, 12_000, 12_000].map((v) => expect.closeTo(v, 6)));
+    expect(rows[2].drawCash).toBeCloseTo(12_000, 6);   // after stopping work, the payments come out of cash
+    // 'work' ignores the end age, so working to 61 keeps paying in at 60.
+    const later = { ...s, people: [{ ...s.people[0], retirementAge: 61 }], contributions: [{ ...isaTopUp, endAge: 60, stopsWith: 'work' as const }] };
+    expect(run(later).map((r) => r.savedFromPay)).toEqual([12_000, 12_000, 12_000, 0].map((v) => expect.closeTo(v, 6)));
+  });
+});

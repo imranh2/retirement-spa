@@ -14,12 +14,16 @@ export function grossSalary(person: Person, age: number, t: number, inflationInd
 
 /**
  * Requested contribution for the year, nominal, before any caps.
- * Only in working years (age < retirementAge) and startAge <= age < endAge.
+ * From startAge, until the payer stops work and/or endAge depending on `stopsWith`
+ * (default: whichever comes first).
  * fixedMonthly = amount * 12; pct types = amount * gross salary; lumpSum = amount at startAge.
  * escalatesWithInflation multiplies fixed amounts by the inflation index.
  */
 export function contributionAmount(c: Contribution, person: Person, age: number, grossSalaryThisYear: number, inflationIndex: number): number {
-  if (age >= person.retirementAge || age < c.startAge || age >= c.endAge) return 0;
+  const stopsWith = c.stopsWith ?? 'age';
+  const stoppedWork = age >= person.retirementAge && stopsWith !== 'ageEvenAfterWork';
+  const pastEndAge = age >= c.endAge && stopsWith !== 'work';
+  if (age < c.startAge || stoppedWork || pastEndAge) return 0;
   switch (c.type) {
     case 'fixedMonthly': return c.amount * MONTHS_PER_YEAR * (c.escalatesWithInflation ? inflationIndex : 1);
     case 'lumpSum': return age === c.startAge ? c.amount * (c.escalatesWithInflation ? inflationIndex : 1) : 0;

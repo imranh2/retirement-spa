@@ -107,3 +107,23 @@ describe('planContributions', () => {
     expect(r.allowanceTapered).toBe(true);
   });
 });
+
+describe('when contributions stop', () => {
+  const person = { name: 'A', dateOfBirth: '1980-01-01', salary: 50_000, salaryGrowthRealPct: 0, retirementAge: 60, niQualifyingYears: 0 };
+  const monthly = (extra: Partial<Contribution>): Contribution => ({ id: 'c', accountId: 'isa', personIndex: 0, type: 'fixedMonthly', amount: 100, startAge: 30, endAge: 65, escalatesWithInflation: false, ...extra });
+  const paidAt = (c: Contribution, age: number) => contributionAmount(c, person, age, 50_000, 1);
+  it('by default (old saved plans): at the end age or on stopping work, whichever is first', () => {
+    expect(paidAt(monthly({}), 59)).toBe(1_200);
+    expect(paidAt(monthly({}), 60)).toBe(0);
+    expect(paidAt(monthly({ endAge: 50 }), 55)).toBe(0);
+  });
+  it("'work': on stopping work, whatever the end age says", () => {
+    expect(paidAt(monthly({ stopsWith: 'work', endAge: 40 }), 55)).toBe(1_200);
+    expect(paidAt(monthly({ stopsWith: 'work', endAge: 40 }), 60)).toBe(0);
+  });
+  it("'ageEvenAfterWork': carries on after stopping work until the end age", () => {
+    expect(paidAt(monthly({ stopsWith: 'ageEvenAfterWork' }), 62)).toBe(1_200);
+    expect(paidAt(monthly({ stopsWith: 'ageEvenAfterWork' }), 65)).toBe(0);
+    expect(paidAt(monthly({ stopsWith: 'ageEvenAfterWork', type: 'lumpSum', amount: 5_000, startAge: 62 }), 62)).toBe(5_000);
+  });
+});

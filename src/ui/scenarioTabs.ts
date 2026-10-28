@@ -367,11 +367,18 @@ const CONTRIB_LABEL: Record<Contribution['type'], string> = {
   fixedMonthly: 'Fixed amount per month', pctOfSalary: 'Percentage of salary (you)', employerPctOfSalary: 'Percentage of salary (employer)', lumpSum: 'One-off lump sum',
 };
 
+/** End age stored for contributions that stop with work (the field is hidden and not used). */
+const MAX_CONTRIBUTION_AGE = 120;
+
 function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
   const pre = `contributions[${i}]`;
   const s = sc(c);
   const acc = s.accounts.find((a) => a.id === k.accountId);
   const isPct = k.type === 'pctOfSalary' || k.type === 'employerPctOfSalary';
+  const payer = s.people[k.personIndex];
+  const payerName = payer?.name || `person ${k.personIndex + 1}`;
+  // "Even after stopping work" makes no sense for a share of salary; show those as a set age.
+  const stops = isPct && k.stopsWith === 'ageEvenAfterWork' ? 'age' : (k.stopsWith ?? 'age');
   const fields: Node[] = [
     selectField({ label: 'Into account', value: k.accountId, errorPath: `${pre}.accountId`, options: [{ value: '', label: 'Choose…', disabled: true }, ...s.accounts.map((a) => ({ value: a.id, label: `${a.name} (${SHORT_LABEL[a.type]}, ${s.people[a.ownerIndex]?.name ?? '?'})` }))],
       onChange: (v) => { const a = s.accounts.find((x) => x.id === v); setS(c, `${pre}.accountId`, v); if (a && a.type !== 'cash' && a.type !== 'gia') setS(c, `${pre}.personIndex`, a.ownerIndex); c.rerender(); } }),
@@ -383,8 +390,21 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
       help: acc?.type === 'dcPension' ? 'For pensions, enter the GROSS amount reaching the pot, including tax relief. Your own payments are limited to your salary, or £3,600 a year gross into a relief-at-source pension if you earn less.' : acc?.type === 'lisa' ? 'Amount you pay in; the 25% bonus is added on top.' : 'Paid from take-home pay.',
       onChange: (v) => setS(c, `${pre}.amount`, v ?? 0) }),
     numberField({ label: k.type === 'lumpSum' ? 'Paid at' : 'From', unit: 'age', min: 0, max: 120, step: 1, value: k.startAge, errorPath: `${pre}.startAge`, help: 'The payer’s age (inclusive).', onChange: (v) => setS(c, `${pre}.startAge`, v ?? 0) }),
-    numberField({ label: 'Until (not including)', unit: 'age', min: 0, max: 120, step: 1, value: k.endAge, errorPath: `${pre}.endAge`, help: 'Contributions also stop when the payer stops work.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? 0) }),
-  ];
+    selectField({ label: 'Stop paying', value: stops, errorPath: `${pre}.stopsWith`,
+      help: 'Payments after stopping work come out of your savings and investments, like spending does. A percentage of salary stops anyway, as there is no salary.',
+      options: [
+        { value: 'work', label: `When ${payerName} stops work (age ${payer?.retirementAge ?? '—'})` },
+        { value: 'age', label: 'At a set age, or on stopping work if sooner' },
+        ...(isPct ? [] : [{ value: 'ageEvenAfterWork', label: 'At a set age, even after stopping work' }]),
+      ],
+      onChange: (v) => {
+        setS(c, `${pre}.stopsWith`, v);
+        // A set age needs a sensible default; for 'work' the end age is not used.
+        if (v !== 'work' && !(k.endAge > k.startAge && k.endAge < MAX_CONTRIBUTION_AGE)) setS(c, `${pre}.endAge`, payer?.retirementAge ?? k.startAge + 1);
+        c.rerender();
+      } }),
+    stops === 'work' ? null : numberField({ label: 'Until (not including)', unit: 'age', min: 0, max: 120, step: 1, value: k.endAge, errorPath: `${pre}.endAge`, help: stops === 'age' ? 'Payments also stop when the payer stops work, if that comes first.' : 'Payments carry on after the payer stops work, until this age.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? 0) }),
+  ].filter((x): x is HTMLElement => x !== null);
   if (!isPct) fields.push(checkboxField({ label: 'Rises with inflation', checked: k.escalatesWithInflation, onChange: (v) => setS(c, `${pre}.escalatesWithInflation`, v) }));
   return fields;
 }
@@ -393,12 +413,12 @@ export function renderContributions(c: TabCtx): HTMLElement {
   const s = sc(c);
   return list(c, {
     title: 'Contributions', path: 'contributions', items: s.contributions,
-    intro: 'Paid at the start of each working year. ISA + LISA are capped at the ISA allowance (excess goes to a GIA or cash); pensions at the annual allowance (tapered for incomes over £260,000, or the MPAA) and 100% of earnings (at least £3,600 gross with relief at source).',
+    intro: 'Paid at the start of each year, normally until the payer stops work (choose per contribution). ISA + LISA are capped at the ISA allowance (excess goes to a GIA or cash); pensions at the annual allowance (tapered for incomes over £260,000, or the MPAA) and 100% of earnings (at least £3,600 gross with relief at source).',
     heading: (k) => { const a = s.accounts.find((x) => x.id === k.accountId); return `${CONTRIB_LABEL[k.type]} → ${a?.name ?? 'no account'}`; },
     body: (k, i) => contributionFields(c, k, i),
     onAdd: () => {
       const target = s.accounts.find((a) => a.type === 'dcPension') ?? s.accounts[0];
-      setS(c, `contributions[${s.contributions.length}]`, { id: uniqueId(s.contributions.map((x) => x.id), 'contrib'), accountId: target?.id ?? '', personIndex: target?.ownerIndex ?? 0, type: 'fixedMonthly', amount: 200, startAge: startAge(s, target?.ownerIndex ?? 0) ?? 30, endAge: s.people[target?.ownerIndex ?? 0]?.retirementAge ?? 60, escalatesWithInflation: true } satisfies Contribution);
+      setS(c, `contributions[${s.contributions.length}]`, { id: uniqueId(s.contributions.map((x) => x.id), 'contrib'), accountId: target?.id ?? '', personIndex: target?.ownerIndex ?? 0, type: 'fixedMonthly', amount: 200, startAge: startAge(s, target?.ownerIndex ?? 0) ?? 30, endAge: MAX_CONTRIBUTION_AGE, stopsWith: 'work', escalatesWithInflation: true } satisfies Contribution);
     },
     addLabel: 'Add contribution',
   });

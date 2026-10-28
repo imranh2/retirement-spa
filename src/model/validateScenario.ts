@@ -101,7 +101,8 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     if (c.type === 'employerPctOfSalary' && acc && acc.type !== 'dcPension') add(`${pre}.type`, 'Employer contributions can only go into a DC pension');
     if (!CONTRIBUTION_TYPES.includes(c.type)) add(`${pre}.type`, 'Unknown contribution type');
     if (!Number.isInteger(c.startAge)) add(`${pre}.startAge`, 'Start age must be a whole number');
-    if (!finite(c.startAge) || !finite(c.endAge) || c.endAge <= c.startAge) add(`${pre}.endAge`, 'End age must be after start age');
+    if (c.stopsWith !== undefined && !['work', 'age', 'ageEvenAfterWork'].includes(c.stopsWith)) add(`${pre}.stopsWith`, 'Choose when payments stop');
+    if (c.stopsWith !== 'work' && (!finite(c.startAge) || !finite(c.endAge) || c.endAge <= c.startAge)) add(`${pre}.endAge`, 'End age must be after start age');
     if (acc && validPerson(c.personIndex) && acc.type !== 'cash' && acc.type !== 'gia' && acc.ownerIndex !== c.personIndex) {
       add(`${pre}.accountId`, 'ISA, LISA and pension contributions must go into the contributor’s own account');
     }

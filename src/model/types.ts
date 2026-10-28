@@ -44,6 +44,12 @@ export interface Contribution {
   startAge: number;                  // inclusive; ages are the person's age
   endAge: number;                    // exclusive
   escalatesWithInflation: boolean;
+  /**
+   * When payments stop. 'work': when the payer stops work (endAge is ignored).
+   * 'age' (default): at endAge, or when the payer stops work if sooner.
+   * 'ageEvenAfterWork': at endAge, carrying on after work stops (paid from savings).
+   */
+  stopsWith?: 'work' | 'age' | 'ageEvenAfterWork';
 }
 // Meaning for pension accounts: `amount` is the GROSS amount reaching the pot (including tax relief).
 // For ISA/LISA/GIA/cash: `amount` is the post-tax amount paid in (for LISA the 25% bonus is added on top).
