@@ -80,6 +80,7 @@ export const CONFIG_FIELDS: FieldMeta[] = [
   // ISA & LISA
   f(`${Y}.isa.annualAllowance`, 'ISA annual allowance', 'gbp', 'ISA & LISA', 'Total that can be paid into ISAs (including a LISA) per person per tax year.', { ...GBP, sourceUrl: SRC.isa }),
   f(`${Y}.isa.cashIsaSubLimit`, 'Cash ISA sub-limit', 'gbp', 'ISA & LISA', 'Optional cap on cash ISA subscriptions. Not modelled yet; recorded for future use.', { ...GBP, nullable: true, sourceUrl: SRC.isa }),
+  f(`${Y}.premiumBonds.holdingLimit`, 'Premium Bonds holding limit', 'gbp', 'ISA & LISA', 'The most one person can hold in NS&I Premium Bonds. Payments in above it go to their GIA, or cash.', { ...GBP, sourceUrl: 'https://www.nsandi.com/products/premium-bonds' }),
   f(`${Y}.lisa.annualAllowance`, 'LISA annual allowance', 'gbp', 'ISA & LISA', 'Maximum paid into a Lifetime ISA each tax year (counts towards the ISA allowance).', { ...GBP, sourceUrl: SRC.lisa }),
   f(`${Y}.lisa.bonusRate`, 'LISA bonus rate', 'pct', 'ISA & LISA', 'Government bonus added to each LISA contribution.', { ...RATE, sourceUrl: SRC.lisa }),
   f(`${Y}.lisa.minAge`, 'LISA minimum age', 'age', 'ISA & LISA', 'You must be at least this age to open or pay into a LISA.', { min: 0, max: 120, step: 1, sourceUrl: SRC.lisa }),
@@ -129,6 +130,7 @@ export const CONFIG_FIELDS: FieldMeta[] = [
   f('market.correlations[][]', 'Correlation', 'count', 'Market assumptions', 'Correlation between two return series (-1 to 1). The matrix is kept symmetric.', { min: -1, max: 1, step: 0.01 }),
   ...(['cash', 'gia', 'isa', 'lisa', 'dcPension'] as const).map((k) =>
     f(`market.defaultAnnualFeePct.${k}`, `Default fee: ${k === 'dcPension' ? 'DC pension' : k.toUpperCase()}`, 'pct', 'Market assumptions', 'Annual fee suggested when you add a new account of this type.', { min: 0, max: 0.1, step: 0.0001 })),
+  f('market.premiumBondsPrizeRate', 'Premium Bonds: expected prize rate', 'pct', 'Market assumptions', 'Yearly return assumed for Premium Bonds that do not set their own rate: prizes, tax-free, the same every year. NS&I publishes its prize fund rate; a typical holder wins somewhat less, as a few big prizes lift the average.', { min: 0, max: 0.2, step: 0.0005, sourceUrl: 'https://www.nsandi.com/products/premium-bonds' }),
   f('market.equityDividendYield', 'Equity dividend yield', 'pct', 'Market assumptions', 'Used only to estimate taxable dividends from equities held in a GIA.', { min: 0, max: 0.2, step: 0.0005 }),
   f('market.wageGrowthRealPct', 'Wage growth above inflation', 'pct', 'Market assumptions', 'Used for the earnings leg of the triple lock and for wage-linked threshold uprating.', { min: -0.1, max: 0.1, step: 0.0005 }),
 

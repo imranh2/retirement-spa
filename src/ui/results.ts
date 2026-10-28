@@ -28,7 +28,7 @@ let realMode = readRealMode();
 const CENTRAL_COLUMNS: { key: keyof CentralCaseRow; label: string }[] = [
   { key: 'age', label: 'Age' }, { key: 'taxYear', label: 'Tax year' },
   { key: 'salary', label: 'Salary' }, { key: 'statePension', label: 'State Pension' }, { key: 'otherIncome', label: 'Other income' }, { key: 'rentalIncome', label: 'Rent' },
-  { key: 'drawCash', label: 'From cash' }, { key: 'drawGia', label: 'From GIA' }, { key: 'drawIsa', label: 'From ISA' }, { key: 'drawLisa', label: 'From LISA' }, { key: 'drawPension', label: 'From pensions' },
+  { key: 'drawCash', label: 'From cash' }, { key: 'drawGia', label: 'From GIA' }, { key: 'drawIsa', label: 'From ISA' }, { key: 'drawLisa', label: 'From LISA' }, { key: 'drawPremiumBonds', label: 'From Premium Bonds' }, { key: 'drawPension', label: 'From pensions' },
   { key: 'spending', label: 'Spending' }, { key: 'mortgagePayments', label: 'Mortgage' }, { key: 'mortgageInterest', label: 'of which interest' }, { key: 'propertyCosts', label: 'Property costs' },
   { key: 'taxPaid', label: 'Income tax + CGT' }, { key: 'niPaid', label: 'NI' },
   { key: 'savedFromPay', label: 'Saved from pay' }, { key: 'spareIncome', label: 'Spare income' },

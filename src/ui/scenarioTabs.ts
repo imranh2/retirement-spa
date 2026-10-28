@@ -3,7 +3,7 @@ import { mortgagePayments } from '../model/mortgageMath';
 import type { Store } from './store';
 import { h, confirmButton } from './dom';
 import { numberField, textField, selectField, checkboxField, errorSlot } from './fields';
-import { formatMoney, formatPct } from './format';
+import { formatMoney, formatPct, toPercentInput } from './format';
 import { ageAt, isIsoDate } from '../model/dates';
 import { defaultStatePensionStartAge, minimumPensionAccessAge, statePensionAge } from '../model/ageRules';
 import { ACCOUNT_TYPES, MIN_HISTORY_ROWS, SURPLUS_ACCOUNT_TYPES } from '../model/validateScenario';
@@ -14,12 +14,19 @@ import { keyFacts, verdictBlock } from './verdict';
 export interface TabCtx { store: Store; rerender: () => void }
 
 export const ACCOUNT_LABEL: Record<AccountType, string> = {
-  cash: 'Cash', gia: 'General investment account (GIA)', isa: 'ISA', lisa: 'Lifetime ISA', dcPension: 'DC pension',
+  cash: 'Cash', gia: 'General investment account (GIA)', isa: 'ISA', lisa: 'Lifetime ISA', premiumBonds: 'Premium Bonds', dcPension: 'DC pension',
 };
-const SHORT_LABEL: Record<AccountType, string> = { cash: 'Cash', gia: 'GIA', isa: 'ISA', lisa: 'LISA', dcPension: 'DC pension' };
+const SHORT_LABEL: Record<AccountType, string> = { cash: 'Cash', gia: 'GIA', isa: 'ISA', lisa: 'LISA', premiumBonds: 'Premium Bonds', dcPension: 'DC pension' };
 
 const sc = (c: TabCtx): Scenario => c.store.getState().scenario;
 const setS = (c: TabCtx, path: string, v: unknown) => c.store.setScenarioValue(path, v);
+
+/** Selects listing people are marked so a name edit can relabel their options as it is typed. */
+const PEOPLE_SELECT = 'data-people';
+function markPeople(el: HTMLElement): HTMLElement {
+  el.querySelector('select')?.setAttribute(PEOPLE_SELECT, '');
+  return el;
+}
 
 function personOptions(s: Scenario) {
   return s.people.map((p, i) => ({ value: String(i), label: p.name || `Person ${i + 1}` }));
@@ -32,13 +39,23 @@ function startAge(s: Scenario, i: number): number | undefined {
 
 /** A list of editable cards with add and remove controls. */
 function list<T>(c: TabCtx, o: { title: string; path: string; items: T[]; heading: (item: T, i: number) => string; body: (item: T, i: number) => Node[]; onAdd?: () => void; addLabel?: string; canRemove?: (i: number) => boolean; onRemove?: (i: number) => void; intro?: string; adders?: Node | null }): HTMLElement {
-  const cards = o.items.map((item, i) => h('div', { class: 'card' },
-    h('div', { class: 'card-head' },
-      h('h4', {}, o.heading(item, i)),
-      o.canRemove === undefined || o.canRemove(i)
-        ? h('button', { type: 'button', class: 'btn ghost small', 'aria-label': `Remove ${o.heading(item, i)}`, onclick: () => { (o.onRemove ?? ((k: number) => c.store.removeScenarioValue(`${o.path}[${k}]`)))(i); c.rerender(); } }, 'Remove')
-        : null),
-    h('div', { class: 'grid' }, ...o.body(item, i))));
+  const cards = o.items.map((item, i) => {
+    const title = h('h4', {}, o.heading(item, i));
+    const remove = o.canRemove === undefined || o.canRemove(i)
+      ? h('button', { type: 'button', class: 'btn ghost small', 'aria-label': `Remove ${o.heading(item, i)}`, onclick: () => { (o.onRemove ?? ((k: number) => c.store.removeScenarioValue(`${o.path}[${k}]`)))(i); c.rerender(); } }, 'Remove')
+      : null;
+    const card = h('div', { class: 'card' }, h('div', { class: 'card-head' }, title, remove), h('div', { class: 'grid' }, ...o.body(item, i)));
+    // Edits are saved as they are typed without rebuilding the tab, so keep the heading (e.g. a name) in step.
+    const refresh = () => {
+      const cur = (sc(c) as unknown as Record<string, T[] | undefined>)[o.path]?.[i];
+      if (cur === undefined) return;
+      title.textContent = o.heading(cur, i);
+      remove?.setAttribute('aria-label', `Remove ${title.textContent}`);
+    };
+    card.addEventListener('input', refresh);
+    card.addEventListener('change', refresh);
+    return card;
+  });
   return h('section', { class: 'panel-section' },
     h('h3', {}, o.title),
     o.intro ? h('p', { class: 'muted' }, o.intro) : null,
@@ -189,7 +206,10 @@ function personFields(c: TabCtx, p: Person, i: number): Node[] {
   const pre = `people[${i}]`;
   const s = sc(c);
   return [
-    textField({ label: 'Name', value: p.name, errorPath: `${pre}.name`, onChange: (v) => setS(c, `${pre}.name`, v) }),
+    textField({ label: 'Name', value: p.name, errorPath: `${pre}.name`, onChange: (v) => {
+      setS(c, `${pre}.name`, v);
+      document.querySelectorAll(`select[${PEOPLE_SELECT}] option[value="${i}"]`).forEach((o) => { o.textContent = v || `Person ${i + 1}`; });
+    } }),
     textField({ label: 'Date of birth', type: 'date', value: p.dateOfBirth, errorPath: `${pre}.dateOfBirth`, onChange: (v) => setS(c, `${pre}.dateOfBirth`, v) }),
     numberField({ label: 'Salary (gross, per year)', unit: 'gbp', min: 0, step: 100, value: p.salary, errorPath: `${pre}.salary`, help: 'Gross annual employment income in today’s money. Set 0 if not working.', onChange: (v) => setS(c, `${pre}.salary`, v ?? 0) }),
     numberField({ label: 'Salary growth above inflation', unit: 'pct', step: 0.001, value: p.salaryGrowthRealPct, errorPath: `${pre}.salaryGrowthRealPct`, help: 'Annual pay rise above inflation, e.g. 1%.', onChange: (v) => setS(c, `${pre}.salaryGrowthRealPct`, v ?? 0) }),
@@ -234,7 +254,7 @@ function streamFields(c: TabCtx, st: IncomeStream, i: number): Node[] {
   const pre = `incomeStreams[${i}]`;
   return [
     textField({ label: 'Name', value: st.name, errorPath: `${pre}.name`, onChange: (v) => setS(c, `${pre}.name`, v) }),
-    selectField({ label: 'Paid to', value: String(st.personIndex), options: personOptions(sc(c)), errorPath: `${pre}.personIndex`, onChange: (v) => setS(c, `${pre}.personIndex`, Number(v)) }),
+    markPeople(selectField({ label: 'Paid to', value: String(st.personIndex), options: personOptions(sc(c)), errorPath: `${pre}.personIndex`, onChange: (v) => setS(c, `${pre}.personIndex`, Number(v)) })),
     numberField({ label: 'Amount per year', unit: 'gbp', min: 0, step: 100, value: st.annualAmount, errorPath: `${pre}.annualAmount`, help: 'In today’s money if inflation-linked; otherwise a fixed cash amount.', onChange: (v) => setS(c, `${pre}.annualAmount`, v ?? 0) }),
     numberField({ label: 'Starts at', unit: 'age', min: 0, max: 120, step: 1, value: st.startAge, errorPath: `${pre}.startAge`, help: 'The recipient’s age when payments start.', onChange: (v) => setS(c, `${pre}.startAge`, v ?? 0) }),
     numberField({ label: 'Ends at', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: st.endAge, placeholder: 'for life', errorPath: `${pre}.endAge`, help: 'Payments stop at this age (exclusive). Blank means for life.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? undefined) }),
@@ -307,6 +327,17 @@ function accountFields(c: TabCtx, a: Account, i: number): Node[] {
     numberField({ label: 'Annual fee', unit: 'pct', min: 0, max: 0.1, step: 0.0001, value: a.annualFeePct, errorPath: `${pre}.annualFeePct`, help: 'Charges taken as a percentage of the balance each year, e.g. fund charges plus a percentage platform fee.', onChange: (v) => setS(c, `${pre}.annualFeePct`, v ?? 0) }),
     numberField({ label: 'Fixed fee per year', unit: 'gbp', nullable: true, min: 0, step: 10, value: a.annualFeeFixed, placeholder: 'none', errorPath: `${pre}.annualFeeFixed`, help: 'A flat platform fee in pounds (e.g. £120 a year), in today’s money; it rises with inflation. Applies on top of the percentage fee.', onChange: (v) => setS(c, `${pre}.annualFeeFixed`, v ?? undefined) }),
   ];
+  if (a.type === 'premiumBonds') {
+    // No investment mix or fees: the value is fixed and the return is prizes (see Rules & Assumptions).
+    const cfg = c.store.getState().config;
+    const limit = Math.min(...Object.values(cfg.tax).map((y) => y.premiumBonds.holdingLimit));
+    return [...fields.slice(0, 4),
+      numberField({ label: 'Predicted prize rate', unit: 'pct', nullable: true, min: 0, max: 0.2, step: 0.001, value: a.prizeRate, placeholder: `${toPercentInput(cfg.market.premiumBondsPrizeRate)}% (from the rules)`, errorPath: `${pre}.prizeRate`,
+        help: 'The yearly return you expect from prizes, tax-free, the same every year. NS&I publishes its prize fund rate; a typical holder wins somewhat less, as a few big prizes lift the average.',
+        onChange: (v) => setS(c, `${pre}.prizeRate`, v ?? undefined) }),
+      h('p', { class: 'muted full' },
+        `NS&I Premium Bonds: the money is safe and can be cashed in at any time, and prizes are tax-free. Each person can hold up to ${formatMoney(limit)}: payments in above that, and prizes once you are at the limit, go into your cash, to be spent like other income.`)];
+  }
   const presetRow = h('div', { class: 'alloc-presets full', role: 'group', 'aria-label': 'Investment mix presets' },
     h('span', { class: 'muted small' }, 'Quick fill:'),
     ...ALLOCATION_PRESETS.map((p) => h('button', {
@@ -353,12 +384,16 @@ export function renderAccounts(c: TabCtx): HTMLElement {
   const s = sc(c);
   const cfg = c.store.getState().config;
   const add = (type: AccountType) => {
-    const alloc = type === 'cash' ? { equities: 0, bonds: 0, cash: 1, property: 0 } : { equities: 0.6, bonds: 0.3, cash: 0.1, property: 0 };
+    const alloc = type === 'cash' || type === 'premiumBonds' ? { equities: 0, bonds: 0, cash: 1, property: 0 } : { equities: 0.6, bonds: 0.3, cash: 0.1, property: 0 };
     setS(c, `accounts[${s.accounts.length}]`, {
       id: uniqueId(s.accounts.map((a) => a.id), type), type, name: ACCOUNT_LABEL[type], ownerIndex: 0, balance: 0, allocation: alloc,
-      annualFeePct: cfg.market.defaultAnnualFeePct[type], ...(type === 'dcPension' ? { pensionReliefMethod: 'netPay' as const } : {}),
+      annualFeePct: type === 'premiumBonds' ? 0 : cfg.market.defaultAnnualFeePct[type], ...(type === 'dcPension' ? { pensionReliefMethod: 'netPay' as const } : {}),
     } satisfies Account);
-    if (!s.withdrawalOrder.includes(type)) setS(c, 'withdrawalOrder', [...s.withdrawalOrder, type]);
+    if (!s.withdrawalOrder.includes(type)) {
+      // Premium Bonds are as easy to cash in as savings, so draw them straight after cash.
+      const after = type === 'premiumBonds' ? s.withdrawalOrder.indexOf('cash') + 1 : s.withdrawalOrder.length;
+      setS(c, 'withdrawalOrder', [...s.withdrawalOrder.slice(0, after), type, ...s.withdrawalOrder.slice(after)]);
+    }
     c.rerender();
   };
   return list(c, {

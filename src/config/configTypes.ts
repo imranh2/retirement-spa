@@ -16,6 +16,7 @@ export interface TaxYearConfig {
         lowerEarningsLimit: number };                  // earnings at or above this make the year count for the State Pension
   cgt: { annualExempt: number; basicRate: number; higherRate: number };
   isa: { annualAllowance: number; cashIsaSubLimit?: number };
+  premiumBonds: { holdingLimit: number };              // most one person can hold, in pounds (not uprated)
   lisa: { annualAllowance: number; bonusRate: number; minAge: number; maxOpenAge: number;
           maxContributionAge: number; penaltyFreeAge: number };
   pension: { annualAllowance: number; mpaa: number; taxFreeFraction: number;
@@ -38,6 +39,7 @@ export interface MarketAssumptions {
   inflation: { mean: number; vol: number; floor: number };   // annual; draws floored at `floor` (e.g. -0.02)
   correlations: number[][];            // 5x5, order: equities, bonds, cash, property, inflation
   defaultAnnualFeePct: Record<'cash' | 'gia' | 'isa' | 'lisa' | 'dcPension', number>;
+  premiumBondsPrizeRate: number;       // default expected yearly prize rate for Premium Bonds (nominal, tax-free)
   equityDividendYield: number;         // used only to estimate taxable dividends in a GIA
   wageGrowthRealPct: number;           // used for triple lock 'earnings' leg
 }

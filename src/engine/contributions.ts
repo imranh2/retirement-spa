@@ -58,6 +58,8 @@ export interface ContributionPlan {
   /** True if anyone's annual allowance was tapered and that cut their contributions. */
   allowanceTapered: boolean;
   isaOverflow: boolean;
+  /** True if Premium Bonds payments went over the holding limit (the excess was kept as cash). */
+  premiumBondsOverflow: boolean;
   lisaIneligible: boolean;
   /** LISA accounts (indexes) opened by their first contribution this year. */
   lisaOpened: number[];
@@ -86,6 +88,7 @@ export function planContributions(
   inflationIndex: number,
   cfg: TaxYearConfig,
   lisaOpen?: readonly boolean[],       // per account; omitted = every LISA is already open
+  premiumBondsRoom?: readonly number[], // per person: holding limit less current holdings; omitted = no limit
 ): ContributionPlan {
   const n = people.length;
   const credits = new Array<number>(accounts.length).fill(0);
@@ -96,6 +99,7 @@ export function planContributions(
   let pensionCapped = false;
   let allowanceTapered = false;
   let isaOverflow = false;
+  let premiumBondsOverflow = false;
   let lisaIneligible = false;
   const lisaOpened: number[] = [];
   const isaRoomLeft = new Array<number>(n).fill(cfg.isa.annualAllowance);
@@ -113,6 +117,7 @@ export function planContributions(
   const pensionReqs: Req[][] = Array.from({ length: n }, () => []);
   const isaReqs: Req[][] = Array.from({ length: n }, () => []);
   const lisaReqs: Req[][] = Array.from({ length: n }, () => []);
+  const bondReqs: Req[][] = Array.from({ length: n }, () => []);
 
   for (const c of contributions) {
     const ai = idxById.get(c.accountId);
@@ -125,6 +130,7 @@ export function planContributions(
     if (acc.type === 'dcPension') pensionReqs[c.personIndex].push(req);
     else if (acc.type === 'isa') isaReqs[c.personIndex].push(req);
     else if (acc.type === 'lisa') lisaReqs[c.personIndex].push(req);
+    else if (acc.type === 'premiumBonds') bondReqs[acc.ownerIndex].push(req);
     else { credits[ai] += amount; fromPay(req, amount); }
   }
 
@@ -203,7 +209,22 @@ export function planContributions(
       sendOverflow(r, r.amount - take);
     }
     isaRoomLeft[p] = isaRoom;
+
+    // Premium Bonds: up to the holding limit; the rest is kept as cash.
+    let bondRoom = premiumBondsRoom?.[p] ?? Number.POSITIVE_INFINITY;
+    for (const r of bondReqs[p]) {
+      const take = Math.max(0, Math.min(r.amount, bondRoom));
+      bondRoom -= take;
+      credits[r.acc] += take;
+      fromPay(r, take);
+      const rest = r.amount - take;
+      if (rest > 0) {
+        premiumBondsOverflow = true;
+        if (firstCash >= 0) credits[firstCash] += rest;
+        fromPay(r, rest);
+      }
+    }
   }
 
-  return { credits, netPayGross, reliefAtSourceGross, fromTakeHome, pensionGross, pensionCapped, allowanceTapered, isaOverflow, lisaIneligible, lisaOpened, isaRoomLeft };
+  return { credits, netPayGross, reliefAtSourceGross, fromTakeHome, pensionGross, pensionCapped, allowanceTapered, isaOverflow, premiumBondsOverflow, lisaIneligible, lisaOpened, isaRoomLeft };
 }

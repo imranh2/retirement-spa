@@ -110,7 +110,7 @@ export interface WithdrawalState {
 }
 
 export type ByType = Record<AccountType, number>;
-export const emptyByType = (): ByType => ({ cash: 0, gia: 0, isa: 0, lisa: 0, dcPension: 0 });
+export const emptyByType = (): ByType => ({ cash: 0, gia: 0, isa: 0, lisa: 0, dcPension: 0, premiumBonds: 0 });
 
 export interface WithdrawalResult {
   state: WithdrawalState;

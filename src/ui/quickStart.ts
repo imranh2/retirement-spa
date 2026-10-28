@@ -13,6 +13,7 @@ export interface QuickStartInput {
   stopWorkAge: number;
   spending: number;
   cash: number;
+  premiumBonds: number;
   isa: number;
   gia: number;
   pension: number;
@@ -26,7 +27,7 @@ export interface QuickStartInput {
 
 export const QUICK_START_DEFAULTS: QuickStartInput = {
   age: 40, salary: 40000, stopWorkAge: 67, spending: 25000,
-  cash: 10000, isa: 0, gia: 0, pension: 60000, pensionPct: 0.05, employerPct: 0.03, isaMonthly: 0,
+  cash: 10000, premiumBonds: 0, isa: 0, gia: 0, pension: 60000, pensionPct: 0.05, employerPct: 0.03, isaMonthly: 0,
   homeValue: 0, mortgageBalance: 0, mortgageYears: 0,
 };
 
@@ -39,10 +40,13 @@ const NO_END_AGE = 120;
 const DEFAULT_FEE = 0.004;
 
 /** A whole scenario from the quick-start answers: one person, the accounts they have, and their home. */
-export function quickStartScenario(q: QuickStartInput, startDate: string = todayIso()): Scenario {
-  const accounts: Account[] = [{ id: 'cash', type: 'cash', name: 'Cash savings', ownerIndex: 0, balance: q.cash, allocation: CASH, annualFeePct: 0 }];
+export function quickStartScenario(q: QuickStartInput, startDate: string = todayIso(), bondLimit = Number.POSITIVE_INFINITY): Scenario {
+  // Premium Bonds above the holding limit could not be held: count the excess as cash.
+  const bonds = Math.min(q.premiumBonds, bondLimit);
+  const accounts: Account[] = [{ id: 'cash', type: 'cash', name: 'Cash savings', ownerIndex: 0, balance: q.cash + q.premiumBonds - bonds, allocation: CASH, annualFeePct: 0 }];
   const add = (type: AccountType, name: string, balance: number, extra: Partial<Account> = {}) =>
     accounts.push({ id: type, type, name, ownerIndex: 0, balance, allocation: GROWTH, annualFeePct: DEFAULT_FEE, ...extra });
+  if (bonds > 0) accounts.push({ id: 'premiumBonds', type: 'premiumBonds', name: 'Premium Bonds', ownerIndex: 0, balance: bonds, allocation: CASH, annualFeePct: 0 });
   if (q.gia > 0) add('gia', 'General investment account', q.gia);
   if (q.isa > 0 || q.isaMonthly > 0) add('isa', 'Stocks & shares ISA', q.isa);
   const pensionPaid = q.salary > 0 && (q.pensionPct > 0 || q.employerPct > 0);
@@ -64,7 +68,7 @@ export function quickStartScenario(q: QuickStartInput, startDate: string = today
     } : undefined,
   }] : [];
 
-  const order: AccountType[] = ['cash', 'gia', 'isa', 'dcPension'];
+  const order: AccountType[] = ['cash', 'premiumBonds', 'gia', 'isa', 'dcPension'];
   return {
     people: [{
       name: 'You', dateOfBirth: addYears(startDate, -q.age), salary: q.salary, salaryGrowthRealPct: 0,
@@ -92,7 +96,8 @@ export function quickStartSection(store: Store, open: boolean, rerender: () => v
   const age = (k: keyof QuickStartInput, label: string, help?: string) =>
     numberField({ label, unit: 'age', min: 16, max: 100, step: 1, value: answers[k], help, onChange: set(k) });
   const build = () => {
-    store.replaceScenario(quickStartScenario(answers));
+    const limit = Math.min(...Object.values(store.getState().config.tax).map((y) => y.premiumBonds.holdingLimit));
+    store.replaceScenario(quickStartScenario(answers, todayIso(), limit));
     store.dismissNotice('welcome');
     location.hash = '#/results';
     rerender();
@@ -108,6 +113,7 @@ export function quickStartSection(store: Store, open: boolean, rerender: () => v
       money('spending', 'Living costs per year', 'Everything except mortgage payments, which go below.')),
     group('Savings and investments today',
       money('cash', 'Cash savings'),
+      money('premiumBonds', 'Premium Bonds', 'NS&I Premium Bonds you hold (up to £50,000).'),
       money('isa', 'Stocks & shares ISA'),
       money('gia', 'Other investments (GIA)', 'Investments outside an ISA or pension.'),
       money('pension', 'Pension pots', 'The total of your defined contribution (DC) pension pots. Add final salary (DB) pensions afterwards under People & Income → Other income.')),

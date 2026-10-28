@@ -17,9 +17,9 @@ describe('config registry coverage', () => {
       expect(f.lastVerified, f.path).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
   });
-  it('every UK-rule field has a gov.uk sourceUrl', () => {
+  it('every UK-rule field has an official source (gov.uk, or nsandi.com for Premium Bonds)', () => {
     const assumptionGroups = new Set(['Market assumptions', 'Historical returns']);
-    const noSource = CONFIG_FIELDS.filter((f) => !assumptionGroups.has(f.group) && !f.sourceUrl?.startsWith('https://www.gov.uk/'));
+    const noSource = CONFIG_FIELDS.filter((f) => !assumptionGroups.has(f.group) && !(f.sourceUrl?.startsWith('https://www.gov.uk/') || f.sourceUrl?.startsWith('https://www.nsandi.com/')));
     expect(noSource.map((f) => f.path)).toEqual([]);
   });
   it('shipped defaults are valid', () => {

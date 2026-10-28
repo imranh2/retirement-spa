@@ -1,5 +1,5 @@
 // Domain types. Percentages are fractions (0.2 = 20%); money is GBP.
-export type AccountType = 'cash' | 'gia' | 'isa' | 'lisa' | 'dcPension';
+export type AccountType = 'cash' | 'gia' | 'isa' | 'lisa' | 'dcPension' | 'premiumBonds';
 
 export interface AssetAllocation {   // must sum to 1 (validate, tolerance 0.0001)
   equities: number;
@@ -17,6 +17,7 @@ export interface Account {
   allocation: AssetAllocation;
   annualFeePct: number;              // e.g. 0.004
   annualFeeFixed?: number;           // flat platform fee, £ a year in today's money (rises with inflation)
+  prizeRate?: number;                // Premium Bonds only: expected yearly prize rate (nominal); blank = market.premiumBondsPrizeRate
   giaCostBasis?: number;             // GIA only; defaults to balance. Used for CGT
   pensionAccessAge?: number;         // DC only; default from config.pensionAccess + DOB
   taxFreeCashTaken?: number;         // DC only; counts against the Lump Sum Allowance
@@ -145,6 +146,7 @@ export interface CentralCaseRow {
   age: number; taxYear: string;
   salary: number; statePension: number; otherIncome: number; rentalIncome: number;
   drawCash: number; drawGia: number; drawIsa: number; drawLisa: number; drawPension: number;
+  drawPremiumBonds?: number;
   spending: number; mortgagePayments: number; propertyCosts: number;
   mortgageInterest?: number;         // the interest part of mortgagePayments
   taxPaid: number; niPaid: number;
@@ -166,7 +168,7 @@ export interface SimulationResult {
   taxPaidByAgeMeanReal: number[];
   /** Added: share of runs that met spending in full in each year; the per-age means below average over these runs. */
   fundedShareByAge?: number[];
-  incomeBySourceMeanReal: Record<'salary' | 'statePension' | 'otherIncome' | 'rental' | 'cash' | 'gia' | 'isa' | 'lisa' | 'dcPension', number[]>;
+  incomeBySourceMeanReal: Record<'salary' | 'statePension' | 'otherIncome' | 'rental' | 'cash' | 'gia' | 'isa' | 'lisa' | 'premiumBonds' | 'dcPension', number[]>;
   centralCase: CentralCaseRow[];     // deterministic: mean assumptions, zero volatility
   maxSustainable?: { multiplier: number; annualSpendReal: number; targetSuccessRate: number };
   warnings: string[];                // e.g. "Pension contributions capped by annual allowance in 12% of runs"

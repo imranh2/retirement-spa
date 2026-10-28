@@ -37,11 +37,11 @@ function theme() {
 /** Distinct series colours that also work in dark mode; series are labelled, never colour-only. */
 const SERIES_COLOURS: Record<string, string> = {
   salary: '#2563eb', statePension: '#ea580c', otherIncome: '#16a34a', rental: '#9333ea',
-  cash: '#64748b', gia: '#a16207', isa: '#db2777', lisa: '#0891b2', dcPension: '#4d7c0f',
+  cash: '#64748b', gia: '#a16207', isa: '#db2777', lisa: '#0891b2', premiumBonds: '#7c3aed', dcPension: '#4d7c0f',
 };
 export const SERIES_LABELS: Record<string, string> = {
   salary: 'Salary', statePension: 'State Pension', otherIncome: 'Other income', rental: 'Rent',
-  cash: 'From cash', gia: 'From GIA', isa: 'From ISA', lisa: 'From LISA', dcPension: 'From pensions',
+  cash: 'From cash', gia: 'From GIA', isa: 'From ISA', lisa: 'From LISA', premiumBonds: 'From Premium Bonds', dcPension: 'From pensions',
 };
 
 function baseOptions(yTitle: string, money = true): ChartConfiguration['options'] {

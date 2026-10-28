@@ -50,6 +50,7 @@ export const DEFAULT_CONFIG: ConfigBundle = {
       },
       // The planned £12,000 cash ISA limit from April 2027 was reversed in Budget 2026 (stays £20,000), so no cashIsaSubLimit.
       isa: { annualAllowance: 20000 },          // verified gov.uk 2026-10-28
+      premiumBonds: { holdingLimit: 50000 },    // verified nsandi.com 2026-10-28
       lisa: {
         annualAllowance: 4000,                  // verified gov.uk 2026-10-28
         bonusRate: 0.25,                        // verified gov.uk 2026-10-28
@@ -138,6 +139,8 @@ export const DEFAULT_CONFIG: ConfigBundle = {
       [-0.10, -0.40, -0.40, 0.20, 1.00],
     ],
     defaultAnnualFeePct: { cash: 0, gia: 0.003, isa: 0.003, lisa: 0.003, dcPension: 0.004 },
+    // NS&I prize fund rate from the September 2026 draw (variable). An average: a typical holder wins less.
+    premiumBondsPrizeRate: 0.0435,              // verified nsandi.com 2026-10-28
     equityDividendYield: 0.02,
     wageGrowthRealPct: 0.01,
   },

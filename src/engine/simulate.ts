@@ -33,7 +33,7 @@ const PROGRESS_CHUNK_RUNS = 500;
 const PERCENT = 100;
 
 type IncomeKey = keyof SimulationResult['incomeBySourceMeanReal'];
-const INCOME_KEYS: IncomeKey[] = ['salary', 'statePension', 'otherIncome', 'rental', 'cash', 'gia', 'isa', 'lisa', 'dcPension'];
+const INCOME_KEYS: IncomeKey[] = ['salary', 'statePension', 'otherIncome', 'rental', 'cash', 'gia', 'isa', 'lisa', 'premiumBonds', 'dcPension'];
 
 /** Everything about a scenario that is the same in every run. */
 interface Prepared {
@@ -84,9 +84,23 @@ interface YearRecord {
   portfolioEnd: number; propertyEquityEnd: number; mortgageBalanceEnd: number;
 }
 
-interface RunFlags { pensionCapped: boolean; allowanceTapered: boolean; isaOverflow: boolean; lisaIneligible: boolean; mortgageLumpSum: boolean; downsizeShortfall: boolean; lsaExhausted: boolean }
+interface RunFlags { pensionCapped: boolean; allowanceTapered: boolean; isaOverflow: boolean; premiumBondsOverflow: boolean; lisaIneligible: boolean; mortgageLumpSum: boolean; downsizeShortfall: boolean; lsaExhausted: boolean }
 
 interface RunOutcome { failedAtAge: number; flags: RunFlags }
+
+/**
+ * Premium Bonds hold their value and pay tax-free prizes at an expected rate that does not move
+ * with markets. Clear their investment mix and fees, so only that fixed rate applies.
+ */
+function withPremiumBondReturns(scenario: Scenario): Scenario {
+  if (!scenario.accounts.some((a) => a.type === 'premiumBonds')) return scenario;
+  return {
+    ...scenario,
+    accounts: scenario.accounts.map((a) => (a.type === 'premiumBonds'
+      ? { ...a, allocation: { equities: 0, bonds: 0, cash: 1, property: 0 }, annualFeePct: 0, annualFeeFixed: undefined }
+      : a)),
+  };
+}
 
 function prepare(scenario: Scenario, config: ConfigBundle): Prepared {
   const issues = validateScenario(scenario, config);
@@ -113,7 +127,7 @@ function prepare(scenario: Scenario, config: ConfigBundle): Prepared {
   for (const a of scenario.accounts) if (a.type === 'dcPension') lsa[a.ownerIndex] += a.taxFreeCashTaken ?? 0;
 
   return {
-    scenario,
+    scenario: withPremiumBondReturns(scenario),
     config,
     T,
     startAge0,
@@ -153,6 +167,27 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
   /** Flat fees come out of the balance after returns, never taking it below zero. */
   const fixedFee = accounts.map((a) => a.annualFeeFixed ?? 0);
   const afterFixedFee = (b: number, a: number, fee: number) => (fee > 0 ? Math.max(0, b - fee) : b);
+  // Premium Bonds grow at a fixed expected prize rate instead of market returns.
+  const prizeRate = accounts.map((a) => (a.type === 'premiumBonds' ? a.prizeRate ?? market.premiumBondsPrizeRate : null));
+  const prizeRateMonthly = prizeRate.map((r) => (r === null ? null : Math.pow(1 + r, 1 / MONTHS_PER_YEAR) - 1));
+  /** Growth of account `a` over one step: prizes for Premium Bonds, else the market return less fees. */
+  const grow = (b: number, a: number, yr: YearReturns, fee: number, prize: (number | null)[]) => {
+    const p = prize[a];
+    return p !== null ? b * (1 + p) : b * (1 + accountReturn(accounts[a].allocation, yr, fee));
+  };
+  /** Prizes that take someone over the Premium Bonds holding limit are paid out into cash. */
+  const capBonds = (b: number[], limit: number) => {
+    if (prep.firstCash < 0) return;
+    for (let i = 0; i < nP; i++) {
+      let over = -limit;
+      for (let a = 0; a < accounts.length; a++) if (prizeRate[a] !== null && accounts[a].ownerIndex === i) over += b[a];
+      for (let a = accounts.length - 1; a >= 0 && over > 0; a--) {
+        if (prizeRate[a] === null || accounts[a].ownerIndex !== i) continue;
+        const take = Math.min(over, b[a]);
+        b[a] -= take; b[prep.firstCash] += take; over -= take;
+      }
+    }
+  };
   const monthlyGrowth = properties.map((p) => ({ own: monthlyRate(p.growthRealPct), market: monthlyRate(market.property.meanReal) }));
 
   let ws: WithdrawalState = {
@@ -168,7 +203,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
   const lisaOpen = accounts.map((a) => a.type === 'lisa' && a.balance > 0);   // a LISA with money in it is already open
   /** New money paid into a GIA is not a gain: raise its cost basis by the amount credited. */
   const creditGiaBasis = (a: number, amount: number) => { if (accounts[a].type === 'gia' && amount > 0) ws.giaBasis[a] += amount; };
-  const flags: RunFlags = { pensionCapped: false, allowanceTapered: false, isaOverflow: false, lisaIneligible: false, mortgageLumpSum: false, downsizeShortfall: false, lsaExhausted: false };
+  const flags: RunFlags = { pensionCapped: false, allowanceTapered: false, isaOverflow: false, premiumBondsOverflow: false, lisaIneligible: false, mortgageLumpSum: false, downsizeShortfall: false, lsaExhausted: false };
 
   let index = 1;
   let spIndex = 1;
@@ -247,7 +282,9 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
 
     // Contributions (start of year, before returns)
     const personYears: PersonYear[] = people.map((_, i) => ({ age: ages[i], grossSalary: salary[i], mpaaTriggered: ws.mpaaTriggered[i], otherTaxableIncome: statePension[i] + taxableStreams[i] + rentShare }));
-    const plan = planContributions(scenario.contributions, accounts, people, personYears, t, index, cfg, lisaOpen);
+    // Premium Bonds room per person: the holding limit less what they hold now (the limit is not uprated).
+    const bondRoom = people.map((_, i) => Math.max(0, cfg.premiumBonds.holdingLimit - accounts.reduce((s, acc, a) => s + (acc.type === 'premiumBonds' && acc.ownerIndex === i ? ws.balances[a] : 0), 0)));
+    const plan = planContributions(scenario.contributions, accounts, people, personYears, t, index, cfg, lisaOpen, bondRoom);
     for (const a of plan.lisaOpened) lisaOpen[a] = true;
     // Spare income this year and where it goes (Scenario.surplus).
     let spareIncome = 0;
@@ -274,6 +311,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     flags.pensionCapped ||= plan.pensionCapped;
     flags.allowanceTapered ||= plan.allowanceTapered;
     flags.isaOverflow ||= plan.isaOverflow;
+    flags.premiumBondsOverflow ||= plan.premiumBondsOverflow;
     flags.lisaIneligible ||= plan.lisaIneligible;
 
     // Baseline tax per person (non-savings income + estimated investment income) and NI
@@ -387,7 +425,8 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       }
       // Returns on what is left, then property growth
       const yr = returns[t];
-      nextBalances = failed ? ws.balances.map(() => 0) : ws.balances.map((b, a) => afterFixedFee(b * (1 + accountReturn(accounts[a].allocation, yr, accounts[a].annualFeePct)), a, fixedFee[a] * index));
+      nextBalances = failed ? ws.balances.map(() => 0) : ws.balances.map((b, a) => afterFixedFee(grow(b, a, yr, accounts[a].annualFeePct, prizeRate), a, fixedFee[a] * index));
+      capBonds(nextBalances, cfg.premiumBonds.holdingLimit);
       ws = { ...ws, balances: nextBalances };
       properties.forEach((p, pi) => { propValue[pi] *= 1 + propertyNominalReturn(yr, p.growthRealPct, market.property.meanReal); });
       indexEnd = index * (1 + yr.inflation);
@@ -426,13 +465,16 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
           const res = executeWithdrawals(deferCtx, needM, { ...ws, balances: bal });
           ws = res.state;
           bal = ws.balances;
-          draws.cash += res.net.cash; draws.gia += res.net.gia; draws.isa += res.net.isa; draws.lisa += res.net.lisa; draws.dcPension += res.net.dcPension;
+          draws.cash += res.net.cash; draws.gia += res.net.gia; draws.isa += res.net.isa; draws.lisa += res.net.lisa; draws.premiumBonds += res.net.premiumBonds; draws.dcPension += res.net.dcPension;
           for (let i = 0; i < nP; i++) { pensionTaxable[i] += res.pensionTaxable[i]; gains[i] += res.gains[i]; }
           failed = res.unmet > SHORTFALL_TOLERANCE_GBP;
         }
         unpackReturn(monthlyReturns, t * MONTHS_PER_YEAR + k, mr);
         if (failed) bal.fill(0);
-        else for (let a = 0; a < nA; a++) bal[a] = afterFixedFee(bal[a] * (1 + accountReturn(accounts[a].allocation, mr, monthlyFee[a])), a, fixedFee[a] * index / MONTHS_PER_YEAR);
+        else {
+          for (let a = 0; a < nA; a++) bal[a] = afterFixedFee(grow(bal[a], a, mr, monthlyFee[a], prizeRateMonthly), a, fixedFee[a] * index / MONTHS_PER_YEAR);
+          capBonds(bal, cfg.premiumBonds.holdingLimit);
+        }
         for (let pi = 0; pi < properties.length; pi++) propValue[pi] *= 1 + propertyNominalReturn(mr, monthlyGrowth[pi].own, monthlyGrowth[pi].market);
         monthIndex *= 1 + mr.inflation;
         cashGrowth *= 1 + mr.cash;
@@ -557,7 +599,7 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
   const funded = new Float64Array(T);
   const runIncome: Record<IncomeKey, Float64Array> = Object.fromEntries(INCOME_KEYS.map((k) => [k, new Float64Array(T)])) as Record<IncomeKey, Float64Array>;
   const runTax = new Float64Array(T);
-  const flagCounts: Record<keyof RunFlags, number> = { pensionCapped: 0, allowanceTapered: 0, isaOverflow: 0, lisaIneligible: 0, mortgageLumpSum: 0, downsizeShortfall: 0, lsaExhausted: 0 };
+  const flagCounts: Record<keyof RunFlags, number> = { pensionCapped: 0, allowanceTapered: 0, isaOverflow: 0, premiumBondsOverflow: 0, lisaIneligible: 0, mortgageLumpSum: 0, downsizeShortfall: 0, lsaExhausted: 0 };
   let completed = 0;
 
   const runChunk = (from: number, to: number) => {
@@ -579,7 +621,7 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
         runIncome.statePension[y.t] = y.statePension / y.index;
         runIncome.otherIncome[y.t] = y.otherIncome / y.index;
         runIncome.rental[y.t] = y.rental / y.index;
-        for (const k of ['cash', 'gia', 'isa', 'lisa', 'dcPension'] as AccountType[]) runIncome[k][y.t] = y.draws[k] / y.index;
+        for (const k of ['cash', 'gia', 'isa', 'lisa', 'premiumBonds', 'dcPension'] as AccountType[]) runIncome[k][y.t] = y.draws[k] / y.index;
         const tax = (y.incomeTax + y.ni + y.cgt) / y.index;
         runTax[y.t] = tax;
         taxPerRun[r] += tax;
@@ -618,6 +660,7 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
     const share = (c: number) => `${Math.round((c / Math.max(1, n)) * PERCENT)}% of runs`;
     if (flagCounts.pensionCapped) warnings.push(`Pension contributions were capped by the annual allowance (or MPAA, or 100% of earnings, or the basic amount with no earnings) in ${share(flagCounts.pensionCapped)}.`);
     if (flagCounts.allowanceTapered) warnings.push(`A high income tapered the pension annual allowance and cut contributions in ${share(flagCounts.allowanceTapered)}. Carry-forward of unused allowance from earlier years is not modelled.`);
+    if (flagCounts.premiumBondsOverflow) warnings.push(`Premium Bonds payments above the holding limit were kept as cash instead in ${share(flagCounts.premiumBondsOverflow)}.`);
     if (flagCounts.isaOverflow) warnings.push(`ISA/LISA contributions above the allowance were redirected to a GIA or cash account in ${share(flagCounts.isaOverflow)}.`);
     if (flagCounts.lisaIneligible) warnings.push('Some LISA contributions were outside the allowed ages (minimum age, latest opening age or contribution end age in Rules & Assumptions), so they were saved in a GIA or cash account instead, without the bonus.');
     if (flagCounts.mortgageLumpSum) warnings.push(`A mortgage balance remained at the end of its term and was paid as a lump sum in ${share(flagCounts.mortgageLumpSum)}.`);
@@ -646,6 +689,7 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
           drawIsa: y.draws.isa / y.index,
           drawLisa: y.draws.lisa / y.index,
           drawPension: y.draws.dcPension / y.index,
+          drawPremiumBonds: y.draws.premiumBonds / y.index,
           spending: y.spending / y.index,
           mortgagePayments: y.mortgagePayments / y.index,
           mortgageInterest: y.mortgageInterest / y.index,

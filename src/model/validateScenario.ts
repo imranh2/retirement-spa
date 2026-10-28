@@ -5,7 +5,7 @@ import { ageAt, isIsoDate } from './dates';
 
 export interface ScenarioIssue { path: string; message: string }
 
-export const ACCOUNT_TYPES: AccountType[] = ['cash', 'gia', 'isa', 'lisa', 'dcPension'];
+export const ACCOUNT_TYPES: AccountType[] = ['cash', 'gia', 'isa', 'lisa', 'premiumBonds', 'dcPension'];
 /** Above this a yearly cost as a share of a home's value is almost certainly a typo. */
 const MAX_RUNNING_COST_PCT = 0.1;
 /** Accounts spare income can be paid into (pensions and LISAs have their own rules). */
@@ -75,6 +75,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     nonNeg(`${pre}.balance`, a.balance, 'Balance');
     if (!finite(a.annualFeePct) || a.annualFeePct < 0 || a.annualFeePct > 1) add(`${pre}.annualFeePct`, 'Fee must be between 0% and 100%');
     if (a.annualFeeFixed !== undefined) nonNeg(`${pre}.annualFeeFixed`, a.annualFeeFixed, 'Fixed fee');
+    if (a.prizeRate !== undefined && (!finite(a.prizeRate) || a.prizeRate < 0 || a.prizeRate > 1)) add(`${pre}.prizeRate`, 'Prize rate must be between 0% and 100%');
     const al = a.allocation;
     const parts = [al.equities, al.bonds, al.cash, al.property];
     if (parts.some((x) => !finite(x) || x < 0)) add(`${pre}.allocation`, 'Allocation shares must be 0% or more');
@@ -88,6 +89,13 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
       if (a.taxFreeCashTaken !== undefined) nonNeg(`${pre}.taxFreeCashTaken`, a.taxFreeCashTaken, 'Tax-free cash taken');
       if (a.pensionReliefMethod !== undefined && !RELIEF_METHODS.includes(a.pensionReliefMethod)) add(`${pre}.pensionReliefMethod`, 'Choose net pay or relief at source');
     }
+  });
+  // Premium Bonds: each person's holdings must be within the holding limit.
+  const bondLimit = config ? Math.min(...Object.values(config.tax).map((y) => y.premiumBonds?.holdingLimit ?? Number.POSITIVE_INFINITY)) : Number.POSITIVE_INFINITY;
+  s.people.forEach((p, i) => {
+    const held = s.accounts.reduce((sum, a) => sum + (a.type === 'premiumBonds' && a.ownerIndex === i && finite(a.balance) ? a.balance : 0), 0);
+    const first = s.accounts.findIndex((a) => a.type === 'premiumBonds' && a.ownerIndex === i);
+    if (first >= 0 && held > bondLimit) add(`accounts[${first}].balance`, `Premium Bonds are limited to £${bondLimit.toLocaleString('en-GB')} per person (${p.name || `person ${i + 1}`} holds £${held.toLocaleString('en-GB')})`);
   });
   const accById = new Map(s.accounts.map((a) => [a.id, a]));
 
