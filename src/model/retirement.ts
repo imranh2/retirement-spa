@@ -1,9 +1,9 @@
 import type { Scenario } from './types';
-import { ageAt } from './dates';
+import { ageAt, isIsoDate } from './dates';
 
-/** Each person's whole-year age at the start date. */
+/** Each person's whole-year age at the start date (NaN while a date of birth is not yet valid). */
 export function currentAges(s: Scenario): number[] {
-  return s.people.map((p) => ageAt(p.dateOfBirth, s.sim.startDate));
+  return s.people.map((p) => (isIsoDate(p.dateOfBirth) && isIsoDate(s.sim.startDate) ? ageAt(p.dateOfBirth, s.sim.startDate) : Number.NaN));
 }
 
 /**
@@ -13,7 +13,8 @@ export function currentAges(s: Scenario): number[] {
  */
 export function withRetirementAge(s: Scenario, age: number): Scenario {
   const now = currentAges(s);
-  const delta = age - s.people[0].retirementAge;
+  // A stop-work age already passed means stopping now, so the partner moves relative to that.
+  const delta = age - Math.max(s.people[0].retirementAge, now[0]);
   return {
     ...s,
     people: s.people.map((p, i) => (i === 0 || p.retirementAge > now[i] ? { ...p, retirementAge: Math.max(now[i], p.retirementAge + delta) } : p)),

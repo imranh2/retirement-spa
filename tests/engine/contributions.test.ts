@@ -137,3 +137,11 @@ describe('when contributions stop', () => {
     expect(paidAt(monthly({ stopsWith: 'ageEvenAfterWork', type: 'lumpSum', amount: 5_000, startAge: 62 }), 62)).toBe(5_000);
   });
 });
+
+describe('a one-off payment after stopping work', () => {
+  it('is still paid at its age (it comes from savings)', () => {
+    const p = { name: 'A', dateOfBirth: '1980-01-01', salary: 0, salaryGrowthRealPct: 0, retirementAge: 50, niQualifyingYears: 0 };
+    expect(contributionAmount(c('l', 'x', 'lumpSum', 20000, { startAge: 55, stopsWith: 'work' }), p, 55, 0, 1)).toBe(20000);
+    expect(contributionAmount(c('l', 'x', 'lumpSum', 20000, { startAge: 55, stopsWith: 'work' }), p, 56, 0, 1)).toBe(0);
+  });
+});

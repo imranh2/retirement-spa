@@ -235,7 +235,7 @@ export function renderResults(c: ResultsCtx): HTMLElement {
       h('div', { class: 'card stat' }, h('h3', {}, 'Lifetime tax paid (today’s money)'), h('p', { class: 'big' }, formatMoney(r.taxPaidTotal.median)),
         h('p', { class: 'muted' }, `Income tax, NI and CGT for the whole plan. Median, today’s money. 10th–90th percentile: ${formatMoney(r.taxPaidTotal.p10)} – ${formatMoney(r.taxPaidTotal.p90)}.`))),
     r.warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Warnings'), h('ul', { class: 'warning-list' }, ...r.warnings.map((w) => h('li', {}, w)))) : null,
-    h('div', { id: 'charts' }, fan.el), hasProperty ? nw.el : null, dep.el, inc.el, tax.el,
+    h('div', { id: 'charts' }, fan.el), hasProperty ? nw.el : null, r.depletionAgeHistogram.length === 0 ? h('p', { class: 'muted chart-note' }, 'No simulated future ran out of money, so there is no run-out chart.') : dep.el, inc.el, tax.el,
     h('section', { class: 'panel-section', id: 'year-by-year' },
       h('div', { class: 'section-head' }, h('h3', {}, 'Year by year (central case: average returns, no ups and downs)'),
         h('span', { class: 'row-btns' }, tableView,
@@ -252,7 +252,7 @@ export function renderResults(c: ResultsCtx): HTMLElement {
     const ages = r.ages;
     void fanChart(fan.canvas, portfolioChart.ages, portfolioChart.bands, moneyLabel, portfolioCap);
     if (hasProperty) void fanChart(nw.canvas, netWorthChart.ages, netWorthChart.bands, moneyLabel, netWorthCap);
-    void percentLine(dep.canvas, ages, runOut, 'Run out of money', 'Runs out of money (%)');
+    if (r.depletionAgeHistogram.length > 0) void percentLine(dep.canvas, ages, runOut, 'Run out of money', 'Runs out of money (%)');
     void stackedBars(inc.canvas, ages, r.incomeBySourceMeanReal, r.fundedShareByAge);
     void barChart(tax.canvas, ages, r.taxPaidByAgeMeanReal, 'Tax paid', '£ per year (today’s money)', true);
   });

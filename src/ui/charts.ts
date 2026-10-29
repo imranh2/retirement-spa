@@ -145,7 +145,7 @@ export function stackedBars(canvas: HTMLCanvasElement, ages: number[], series: R
       ...opts,
       plugins: {
         ...opts?.plugins,
-        tooltip: { callbacks: { label: (ctx) => (ctx.dataset.yAxisID === 'y1' ? `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)}%` : `${ctx.dataset.label ?? ''}: ${formatMoney(Number(ctx.parsed.y))}`) } },
+        tooltip: { filter: (item) => Math.abs(Number(item.parsed.y)) >= 0.5, callbacks: { label: (ctx) => (ctx.dataset.yAxisID === 'y1' ? `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)}%` : `${ctx.dataset.label ?? ''}: ${formatMoney(Number(ctx.parsed.y))}`) } },
       },
       scales: {
         x: { ...opts?.scales?.x, stacked: true },

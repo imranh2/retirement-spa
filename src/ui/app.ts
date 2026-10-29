@@ -2,6 +2,7 @@ import { createStore, type AppState, type Store } from './store';
 import { createSimClient } from './simClient';
 import { h, downloadText, toast } from './dom';
 import { showErrors } from './fields';
+import { blockingIssues } from '../config/configValidate';
 import { formatMoney, formatMoneyCompact, formatPct } from './format';
 import { TABS, startRouter, type TabId } from './router';
 import { renderOverview, renderPeople, renderAccounts, renderContributions, renderProperty, renderSpending, refreshTakeHome } from './scenarioTabs';
@@ -34,7 +35,7 @@ export function startApp(root: HTMLElement): Store {
     fileInput.value = '';
     if (!file) return;
     const res = store.importJson(await file.text());
-    if (res.ok) { store.dismissNotice('import'); toast(`Imported ${file.name}.`); rerender(); }
+    if (res.ok) { store.dismissNotice('import'); store.dismissNotice('welcome'); toast(`Imported ${file.name}.`); rerender(); }
     else store.addNotice({ id: 'import', kind: 'error', text: `Could not import ${file.name}: ${res.errors.slice(0, 6).join(' · ')}${res.errors.length > 6 ? ` (+${res.errors.length - 6} more)` : ''}` });
   });
 
@@ -43,7 +44,7 @@ export function startApp(root: HTMLElement): Store {
     h('div', { class: 'header-actions' },
       h('a', { href: '#/overview/quickstart', class: 'btn ghost' }, 'New plan'),
       h('button', { type: 'button', class: 'btn', title: 'Save your scenario and rules as a JSON file', onclick: () => { downloadText(`ukplanner-${store.getState().scenario.sim.startDate}.json`, 'application/json', store.exportJson()); } }, 'Export'),
-      h('label', { for: 'import-file', class: 'btn', tabindex: 0, title: 'Load a JSON file saved with Export',
+      h('label', { for: 'import-file', class: 'btn', tabindex: 0, role: 'button', title: 'Load a JSON file saved with Export',
         // Importing replaces the current plan, so ask first (as loading an example or the quick start does).
         onclick: (e: Event) => { if (!confirmImport()) e.preventDefault(); },
         onkeydown: (e: Event) => { const k = (e as KeyboardEvent).key; if (k === 'Enter' || k === ' ') { e.preventDefault(); if (confirmImport()) fileInput.click(); } } }, 'Import'),
@@ -169,6 +170,10 @@ export function startApp(root: HTMLElement): Store {
   store.subscribe((s) => {
     trackDeltas(s);
     if (s.results && s.results !== last.results) announce.textContent = `Results updated: ${formatPct(s.results.successRate)} chance the money lasts.`;
+    // One announcement when the number of problems changes (the per-field messages are not live regions).
+    const problemsNow = s.scenarioErrors.length + blockingIssues(s.errors).length;
+    const problemsBefore = last.scenarioErrors.length + blockingIssues(last.errors).length;
+    if (problemsNow !== problemsBefore && problemsNow > 0) announce.textContent = `${problemsNow} problem${problemsNow === 1 ? '' : 's'} to fix.`;
     renderSummary(s);
     panel.querySelectorAll<HTMLElement>('.progress-slot').forEach((el) => el.replaceChildren(progressBar(store)));
     if (s.notices !== last.notices) renderNotices(s);

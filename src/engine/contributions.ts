@@ -16,20 +16,20 @@ export function grossSalary(person: Person, age: number, t: number, inflationInd
 /**
  * Requested contribution for the year, nominal, before any caps.
  * From startAge, until the payer stops work and/or endAge depending on `stopsWith`
- * (default: whichever comes first).
+ * (default: whichever comes first). A lump sum is paid once, at startAge, regardless.
  * fixedMonthly = amount * 12; pct types = amount * gross salary; lumpSum = amount at startAge.
  * escalatesWithInflation multiplies fixed amounts by the inflation index.
  */
 export function contributionAmount(c: Contribution, person: Person, age: number, grossSalaryThisYear: number, inflationIndex: number): number {
-  // Outside money (a gift or inheritance) arrives at its age whether or not the payer still works.
-  if (c.type === 'lumpSum' && c.source === 'external') return age === c.startAge ? c.amount * (c.escalatesWithInflation ? inflationIndex : 1) : 0;
+  // A one-off payment is made at its age whether or not the payer still works: from pay or savings
+  // (or outside money such as a gift). The stop rules are for regular payments.
+  if (c.type === 'lumpSum') return age === c.startAge ? c.amount * (c.escalatesWithInflation ? inflationIndex : 1) : 0;
   const stopsWith = c.stopsWith ?? 'age';
   const stoppedWork = age >= person.retirementAge && stopsWith !== 'ageEvenAfterWork';
   const pastEndAge = age >= c.endAge && stopsWith !== 'work';
   if (age < c.startAge || stoppedWork || pastEndAge) return 0;
   switch (c.type) {
     case 'fixedMonthly': return c.amount * MONTHS_PER_YEAR * (c.escalatesWithInflation ? inflationIndex : 1);
-    case 'lumpSum': return age === c.startAge ? c.amount * (c.escalatesWithInflation ? inflationIndex : 1) : 0;
     case 'pctOfSalary':
     case 'employerPctOfSalary': return c.amount * grossSalaryThisYear;
     default: return 0;   // unknown types are rejected by validation; never credit NaN

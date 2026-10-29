@@ -18,6 +18,14 @@ const MAX_RUNS = 100000;
 const MAX_AGE = 120;
 /** Largest yearly change allowed for spending phases and rent (above or below inflation). */
 const MAX_YEARLY_CHANGE = 0.2;
+/** Some schemes allow pension access from 50; anything lower is a typo. */
+const MIN_PROTECTED_PENSION_AGE = 50;
+/** A mortgage term rounds to whole months; below this it would round to none. */
+const MIN_MORTGAGE_TERM_YEARS = 0.1;
+/** Plain names for account types in messages. */
+const TYPE_NAME: Record<AccountType, string> = { cash: 'cash', gia: 'GIA', isa: 'ISA', lisa: 'LISA', premiumBonds: 'Premium Bonds', dcPension: 'DC pension' };
+/** No real account charges more than this a year; above it is a typo (e.g. 12 for 1.2%). */
+const MAX_FEE_PCT = 0.1;
 const ALLOCATION_TOLERANCE = 0.0001;
 /** Minimum rows of history for the block bootstrap (mirrors engine MIN_BOOTSTRAP_YEARS). */
 export const MIN_HISTORY_ROWS = 10;
@@ -50,6 +58,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     const pre = `people[${i}]`;
     if (!isIsoDate(p.dateOfBirth)) add(`${pre}.dateOfBirth`, 'Date of birth must be yyyy-mm-dd');
     else if (startOk && ageAt(p.dateOfBirth, s.sim.startDate) < 0) add(`${pre}.dateOfBirth`, 'Date of birth is after the start date');
+    else if (startOk && ageAt(p.dateOfBirth, s.sim.startDate) > MAX_AGE) add(`${pre}.dateOfBirth`, 'Check the date of birth: this age is over 120');
     nonNeg(`${pre}.salary`, p.salary, 'Salary');
     if (!finite(p.salaryGrowthRealPct) || p.salaryGrowthRealPct < -0.5 || p.salaryGrowthRealPct > 0.5) add(`${pre}.salaryGrowthRealPct`, 'Salary growth must be between -50% and 50%');
     if (!finite(p.retirementAge) || p.retirementAge < 0 || p.retirementAge > MAX_AGE) add(`${pre}.retirementAge`, 'Retirement age must be between 0 and 120');
@@ -77,7 +86,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     if (!ACCOUNT_TYPES.includes(a.type)) add(`${pre}.type`, 'Unknown account type');
     if (!validPerson(a.ownerIndex)) add(`${pre}.ownerIndex`, 'Owner must be one of the people');
     nonNeg(`${pre}.balance`, a.balance, 'Balance');
-    if (!finite(a.annualFeePct) || a.annualFeePct < 0 || a.annualFeePct > 1) add(`${pre}.annualFeePct`, 'Fee must be between 0% and 100%');
+    if (!finite(a.annualFeePct) || a.annualFeePct < 0 || a.annualFeePct > MAX_FEE_PCT) add(`${pre}.annualFeePct`, 'Fee must be between 0% and 10% a year');
     if (a.annualFeeFixed !== undefined) nonNeg(`${pre}.annualFeeFixed`, a.annualFeeFixed, 'Fixed fee');
     if (a.prizeRate !== undefined && (!finite(a.prizeRate) || a.prizeRate < 0 || a.prizeRate > 1)) add(`${pre}.prizeRate`, 'Prize rate must be between 0% and 100%');
     const al = a.allocation;
@@ -89,7 +98,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     }
     if (a.type === 'gia' && a.giaCostBasis !== undefined) nonNeg(`${pre}.giaCostBasis`, a.giaCostBasis, 'Cost basis');
     if (a.type === 'dcPension') {
-      if (a.pensionAccessAge !== undefined && (!finite(a.pensionAccessAge) || a.pensionAccessAge < 0 || a.pensionAccessAge > MAX_AGE)) add(`${pre}.pensionAccessAge`, 'Access age must be between 0 and 120');
+      if (a.pensionAccessAge !== undefined && (!finite(a.pensionAccessAge) || a.pensionAccessAge < MIN_PROTECTED_PENSION_AGE || a.pensionAccessAge > MAX_AGE)) add(`${pre}.pensionAccessAge`, `Access age must be between ${MIN_PROTECTED_PENSION_AGE} (the lowest protected pension age) and 120; leave it blank for the normal minimum`);
       if (a.taxFreeCashTaken !== undefined) nonNeg(`${pre}.taxFreeCashTaken`, a.taxFreeCashTaken, 'Tax-free cash taken');
       if (a.pensionReliefMethod !== undefined && !RELIEF_METHODS.includes(a.pensionReliefMethod)) add(`${pre}.pensionReliefMethod`, 'Choose net pay or relief at source');
     }
@@ -122,7 +131,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     else if (c.source === 'external' && c.type !== 'lumpSum') add(`${pre}.source`, 'Only a one-off lump sum can come from outside money');
     else if (c.source === 'external' && acc?.type === 'dcPension' && (acc.pensionReliefMethod ?? 'netPay') === 'netPay') add(`${pre}.source`, 'Outside money cannot go through net pay (that only works via payroll). Set this pension to relief at source on the Accounts tab, or pay it into another account.');
     const outside = c.type === 'lumpSum' && c.source === 'external';
-    if (c.stopsWith !== 'work' && !outside && (!finite(c.startAge) || !finite(c.endAge) || c.endAge <= c.startAge)) add(`${pre}.endAge`, 'End age must be after start age');
+    if (c.type !== 'lumpSum' && c.stopsWith !== 'work' && (!finite(c.startAge) || !finite(c.endAge) || c.endAge <= c.startAge)) add(`${pre}.endAge`, 'End age must be after start age');
     if (acc && validPerson(c.personIndex) && acc.type !== 'cash' && acc.type !== 'gia' && acc.ownerIndex !== c.personIndex) {
       add(`${pre}.accountId`, 'ISA, LISA and pension contributions must go into the contributor’s own account');
     }
@@ -150,7 +159,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
       if (!finite(m.rate) || m.rate < 0 || m.rate > 1) add(`${pre}.mortgage.rate`, 'Rate must be between 0% and 100%');
       if (!finite(m.reversionRate) || m.reversionRate < 0 || m.reversionRate > 1) add(`${pre}.mortgage.reversionRate`, 'Rate must be between 0% and 100%');
       nonNeg(`${pre}.mortgage.fixedYearsRemaining`, m.fixedYearsRemaining, 'Fixed years');
-      if (!finite(m.termYearsRemaining) || m.termYearsRemaining <= 0) add(`${pre}.mortgage.termYearsRemaining`, 'Term must be more than 0 years');
+      if (!finite(m.termYearsRemaining) || m.termYearsRemaining < MIN_MORTGAGE_TERM_YEARS) add(`${pre}.mortgage.termYearsRemaining`, 'Term must be at least a month (0.1 years)');
       nonNeg(`${pre}.mortgage.monthlyOverpayment`, m.monthlyOverpayment, 'Overpayment');
     }
     if (p.downsize) {
@@ -235,7 +244,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
   if (s.pensionDrawdown !== undefined && !['inOrder', 'allowance', 'basicRate'].includes(s.pensionDrawdown)) add('pensionDrawdown', 'Choose how pension withdrawals are taken');
   if (new Set(s.withdrawalOrder).size !== s.withdrawalOrder.length) add('withdrawalOrder', 'Each account type may appear only once');
   for (const t of new Set(s.accounts.map((a) => a.type))) {
-    if (!s.withdrawalOrder.includes(t)) add('withdrawalOrder', `Add ${t} to the withdrawal order, or its accounts will never be drawn`);
+    if (!s.withdrawalOrder.includes(t)) add('withdrawalOrder', `Add ${TYPE_NAME[t]} to the withdrawal order, or its accounts will never be drawn`);
   }
 
   if (!Number.isInteger(s.sim.runs) || s.sim.runs < 1 || s.sim.runs > MAX_RUNS) add('sim.runs', 'Runs must be a whole number from 1 to 100,000');

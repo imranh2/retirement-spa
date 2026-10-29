@@ -45,7 +45,8 @@ interface Prepared {
   labels: string[];                // tax year label per year
   baseTax: TaxYearConfig[];        // resolved at factor 1, per year
   freezeEndStart: number;          // start year of the last frozen tax year
-  upratedBase: (string | undefined)[]; // per year: the defined year it copies, if that year is itself after the freeze
+  upratedBase: (string | undefined)[];
+  beforeFirst: boolean[]; // per year: the defined year it copies, if that year is itself after the freeze
   upratedBaseT: number[];          // per year: index t of that base year in this simulation (-1 if before the start)
   spStartAge: number[];
   niEndAge: number[];              // employee NI stops at State Pension age (whole years, ignoring deferral)
@@ -64,13 +65,15 @@ interface Prepared {
  * when that year is itself after the freeze. Its thresholds already include uprating, so
  * the year's factor must be measured from that year, not from the end of the freeze.
  */
-function upratedBases(config: ConfigBundle, labels: string[], startYear: number, freezeEndStart: number): { upratedBase: (string | undefined)[]; upratedBaseT: number[] } {
+function upratedBases(config: ConfigBundle, labels: string[], startYear: number, freezeEndStart: number): { upratedBase: (string | undefined)[]; upratedBaseT: number[]; beforeFirst: boolean[] } {
   const upratedBase = labels.map((l) => {
     if (config.tax[l]) return undefined;
     const base = latestDefinedYear(config, l);
     return base !== undefined && taxYearStartYear(base) > freezeEndStart ? base : undefined;
   });
-  return { upratedBase, upratedBaseT: upratedBase.map((b) => (b === undefined ? -1 : taxYearStartYear(b) - startYear)) };
+  // A year before the first defined tax year copies that year's rules as they are (no uprating).
+  const beforeFirst = labels.map((l) => !config.tax[l] && latestDefinedYear(config, l) === undefined);
+  return { upratedBase, upratedBaseT: upratedBase.map((b) => (b === undefined ? -1 : taxYearStartYear(b) - startYear)), beforeFirst };
 }
 
 /** Per-year record of one run (nominal unless noted). */
@@ -263,6 +266,9 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
 
   let index = 1;
   let spIndex = 1;
+  // Thresholds are uprated by whole tax years of inflation (a part first year counts in full),
+  // so this index can differ from the price index after a part first year.
+  let upIndex = 1;
   let freezeIndex = prep.freezeEndStart < taxYearStartYear(prep.labels[0]) ? 1 : Number.NaN;
   let prevW: number | undefined;
   let prevInflation = market.inflation.mean;
@@ -276,17 +282,19 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
   for (let t = 0; t < T; t++) {
     const age0 = prep.startAge0 + t;
     const label = prep.labels[t];
-    if (taxYearStartYear(label) === prep.freezeEndStart) freezeIndex = index;
-    yearStartIndex[t] = index;
+    if (taxYearStartYear(label) === prep.freezeEndStart) freezeIndex = upIndex;
+    yearStartIndex[t] = upIndex;
     const fi = Number.isNaN(freezeIndex) ? 1 : freezeIndex;
     const base = prep.upratedBase[t];
     const bt = prep.upratedBaseT[t];
     const baseFactor = base === undefined ? 1 : thresholdFactor(config, base, bt >= 0 ? yearStartIndex[bt] : 1, fi);
-    const factor = thresholdFactor(config, label, index, fi) / baseFactor;
+    const factor = prep.beforeFirst[t] ? 1 : thresholdFactor(config, label, upIndex, fi) / baseFactor;
     // The first tax year is usually part-way through: count only the months left in it. Flows and
     // annual allowances are scaled together, so tax is that share of a full year's tax.
     const months = t === 0 ? prep.firstYearMonths : MONTHS_PER_YEAR;
     const frac = months / MONTHS_PER_YEAR;
+    // Years of growth so far for "rises x% a year": a part first year counts as its fraction.
+    const tGrow = t === 0 ? 0 : t - 1 + prep.firstYearMonths / MONTHS_PER_YEAR;
     const fullCfg = factor === 1 ? prep.baseTax[t] : resolveTaxYear(config, label, factor);
     const cfg = frac < 1 ? partYearRules(fullCfg, frac) : fullCfg;
     const ages = prep.ageOffset.map((o) => age0 + o);
@@ -296,7 +304,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     let rentTotal = 0;
     properties.forEach((p, pi) => { if (owned[pi]) rentTotal += rentNominal(p, index); });
     for (let i = 0; i < nP; i++) {
-      salary[i] = grossSalary(people[i], ages[i], t, index);
+      salary[i] = grossSalary(people[i], ages[i], tGrow, index);
       statePension[i] = ages[i] >= prep.spStartAge[i] ? prep.spEntitlementToday[i] * spIndex : 0;
       taxableStreams[i] = 0; otherStreams[i] = 0;
     }
@@ -319,7 +327,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     let propertyCosts = 0;
     let downsizeShortfall = 0;
     let homePurchase = 0;
-    let lisaHomeOk = false;
+    let lisaDepositCap = 0;   // the deposit a first-time buyer's LISA may go towards (not stamp duty or fees)
     properties.forEach((p, pi) => {
       if (!owned[pi]) {
         if (p.buyAtAge === undefined || age0 < p.buyAtAge) return;
@@ -331,7 +339,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         const ownsAnother = owned.some((o, k) => o && k !== pi);
         const ftb = p.firstTimeBuyer === true && p.isMainResidence && !ownsAnother;
         homePurchase += deposit + stampDuty(price, ftb, cfg.stampDuty, ownsAnother) + (p.buyingCosts ?? 0) * index;
-        if (ftb && price <= cfg.lisa.homePriceCap) lisaHomeOk = true;
+        if (ftb && price <= cfg.lisa.homePriceCap) lisaDepositCap += deposit;
         const loan = price - deposit;
         if (p.mortgage && loan > 0) mort[pi] = initialMortgageState({ ...p.mortgage, balance: loan });
         rentTotal += rentNominal(p, index) * frac;   // a let property earns rent from the year it is bought
@@ -366,7 +374,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     for (const r of scenario.rentPaid ?? []) {
       const rentEnd = r.untilAge ?? ((r.fromAge ?? 0) < firstPurchaseAge ? firstPurchaseAge : Number.POSITIVE_INFINITY);
       if (age0 < (r.fromAge ?? 0) || age0 >= rentEnd) continue;
-      rentPaid += r.monthly * MONTHS_PER_YEAR * index * Math.pow(1 + r.growthRealPct, t) * frac;
+      rentPaid += r.monthly * MONTHS_PER_YEAR * index * Math.pow(1 + r.growthRealPct, tGrow) * frac;
     }
     let oneOffCosts = 0;
     for (const o of scenario.oneOffCosts ?? []) if (oneOffDue(o, age0)) oneOffCosts += o.amount * (o.inflationLinked ? index : 1);
@@ -454,7 +462,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     const retired = age0 >= people[0].retirementAge;
     const W = targetSpend({
       strategy: scenario.strategy,
-      phaseSpendToday: plannedSpendToday(scenario.spending, age0, prep.startAge0, index) * spendMultiplier,
+      phaseSpendToday: plannedSpendToday(scenario.spending, age0, prep.startAge0, index, 1 - prep.firstYearMonths / MONTHS_PER_YEAR) * spendMultiplier,
       inflationIndex: index,
       retired,
       portfolioAtStart,
@@ -464,12 +472,13 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     if (retired) prevW = W;
     const spend = W * frac;   // the strategy works in whole years; the first year spends its share
 
-    // A first-time buyer's LISA goes towards the deposit first (no charge within the price cap).
+    // A first-time buyer's LISA goes towards the deposit first (no charge within the price cap). The
+    // plan's first-time buyer flag is for the household, so every LISA in it may be used.
     let lisaForHome = 0;
-    if (homePurchase > 0 && lisaHomeOk) {
+    if (lisaDepositCap > 0) {
       accounts.forEach((acc, a) => {
         if (acc.type !== 'lisa') return;
-        const take = Math.min(balances[a], homePurchase - lisaForHome);
+        const take = Math.min(balances[a], lisaDepositCap - lisaForHome);
         balances[a] -= take; lisaForHome += take;
       });
     }
@@ -684,6 +693,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     if (failed) return { failedAtAge: age0, flags };
 
     spIndex *= 1 + statePensionGrowth(yearInflation, config, firstTaxYear + t + 1);   // the increase for next tax year
+    upIndex *= 1 + yearInflation;
     prevInflation = indexEnd / index - 1;   // prices over the year actually simulated (part of one, at first)
     lastCash = yearCash;
     index = indexEnd;

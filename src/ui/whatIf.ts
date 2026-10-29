@@ -1,7 +1,7 @@
 import type { Scenario, SimulationResult } from '../model/types';
 import type { MaxSpendValue, QuickResult } from '../model/workerMessages';
 import type { Store } from './store';
-import { canChooseStopWork, withRetirementAge } from '../model/retirement';
+import { canChooseStopWork, currentAges, withRetirementAge } from '../model/retirement';
 import { h, uid } from './dom';
 import { formatMoney, formatPct } from './format';
 import { lastsLabel, moneyLastsUntil } from './longevity';
@@ -32,7 +32,13 @@ const ui: {
 export function whatIfScenario(s: Scenario, retireAt: number | undefined, spendPct: number): Scenario {
   const retired = retireAt === undefined ? s : withRetirementAge(s, retireAt);
   const k = spendPct / FULL_PCT;
-  return { ...retired, spending: retired.spending.map((p) => ({ ...p, annualSpend: Math.round(p.annualSpend * k) })) };
+  const st = retired.strategy;
+  // Flexible strategies ignore the spending plan once retired, so scale their own numbers too.
+  const strategy: Scenario['strategy'] = st.kind === 'percentOfPortfolio' ? { ...st, pct: st.pct * k }
+    : st.kind === 'floorCeiling' ? { ...st, pct: st.pct * k, floor: st.floor * k, ceiling: st.ceiling * k }
+      : st.kind === 'guardrails' ? { ...st, initialPct: st.initialPct * k }
+        : st;
+  return { ...retired, strategy, spending: retired.spending.map((p) => ({ ...p, annualSpend: Math.round(p.annualSpend * k) })) };
 }
 
 /**
@@ -120,7 +126,7 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
     } }, 'Try this spending');
     spendLine.replaceChildren(
       h('p', {}, `${when}, you could spend up to `, h('strong', {}, `${formatMoney(v.annualSpendReal)} a year`),
-        ` for a ${pct} chance${extra ? ` (plus your ${extra})` : ''}. `, ui.spendPct === tryPct ? null : tryIt),
+        ` for a ${pct} chance${extra ? ` (plus your ${extra})` : ''}${s.strategy.kind !== 'fixedReal' ? ', if spent as a fixed amount rising with inflation' : ''}. `, ui.spendPct === tryPct ? null : tryIt),
       ...v.warnings.map((w) => h('p', { class: 'muted small' }, w)),
       ...(age !== undefined && age !== planned ? [h('p', { class: 'muted small' }, 'Quick estimate (2,000 simulated futures), to within about half a percent of your planned spending.')] : []));
   };
@@ -161,7 +167,9 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
 
   const retireId = uid('whatif-retire');
   const retireValue = h('output', { for: retireId, class: 'whatif-value' });
-  const setRetireLabel = (age: number) => { retireValue.textContent = age === planned ? `${age} (your plan)` : `${age} (${Math.abs(age - planned)} year${Math.abs(age - planned) === 1 ? '' : 's'} ${age < planned ? 'earlier' : 'later'})`; };
+  const partner = s.people[1];
+  const partnerNote = (age: number) => (partner && partner.retirementAge > (ageNow + (currentAges(s)[1] - ageNow)) ? ` · ${partner.name || 'partner'}: ${withRetirementAge(s, age).people[1].retirementAge}` : '');
+  const setRetireLabel = (age: number) => { retireValue.textContent = (age === planned ? `${age} (your plan)` : `${age} (${Math.abs(age - planned)} year${Math.abs(age - planned) === 1 ? '' : 's'} ${age < planned ? 'earlier' : 'later'})`) + partnerNote(age); };
   const retireRow = retireAt === undefined ? null : h('div', { class: 'whatif-row' },
     h('label', { for: retireId }, s.people.length > 1 ? `Stop work at (${who})` : 'Stop work at'), retireValue,
     h('input', { type: 'range', id: retireId, min: ageNow, max: latest, step: 1, value: retireAt,
@@ -170,7 +178,8 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
 
   const spendId = uid('whatif-spend');
   const spendValue = h('output', { for: spendId, class: 'whatif-value' });
-  const setSpendLabel = (pct: number) => { spendValue.textContent = `${formatMoney(spendNow * pct / FULL_PCT)} a year${pct === FULL_PCT ? ' (your plan)' : ` (${pct}% of plan${s.spending.length > 1 ? ', every phase' : ''})`}`; };
+  const flexible = s.strategy.kind !== 'fixedReal';
+  const setSpendLabel = (pct: number) => { spendValue.textContent = `${formatMoney(spendNow * pct / FULL_PCT)} a year${pct === FULL_PCT ? ' (your plan)' : ` (${pct}% of plan${s.spending.length > 1 ? ', every phase' : ''}${flexible ? ', and of your withdrawal rate' : ''})`}`; };
   setSpendLabel(ui.spendPct);
   const spendInput = h('input', { type: 'range', id: spendId, min: SPEND_MIN_PCT, max: SPEND_MAX_PCT, step: SPEND_STEP_PCT, value: ui.spendPct,
     oninput: (e: Event) => { ui.spendPct = Number((e.target as HTMLInputElement).value); setSpendLabel(ui.spendPct); schedule(); renderSpendLine(); } });

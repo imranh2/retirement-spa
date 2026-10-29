@@ -84,7 +84,7 @@ function section(c: ConfigCtx, group: string, year: string, body: Node[]): HTMLE
   const problems = c.store.getState().errors.filter((e) => paths.some((p) => e.path === p || e.path.startsWith(`${p}.`) || e.path.startsWith(`${p}[`))).length;
   const details = h('details', { class: 'panel-section config-section', id, open: openSections.has(group) || problems > 0 },
     h('summary', {}, h('h3', {}, group),
-      changed > 0 ? h('span', { class: 'changed-count' }, `● ${changed} changed`) : null,
+      h('span', { class: 'changed-count', 'data-section-changed': group, hidden: changed === 0 }, `● ${changed} changed`),
       problems > 0 ? h('span', { class: 'problem-count' }, `⚠ ${problems} to check`) : null),
     h('div', { class: 'section-head' }, h('span'),
       paths.length > 0 ? confirmButton('Reset section', `Reset ${group}`, () => { c.store.resetSection(paths); c.rerender(); }, 'btn small') : null),
@@ -297,5 +297,13 @@ export function renderConfigEditor(c: ConfigCtx): HTMLElement {
 export function refreshModifiedDots(root: ParentNode, store: Store): void {
   root.querySelectorAll<HTMLElement>('[data-modified-for]').forEach((el) => {
     el.hidden = !store.isModified(el.dataset.modifiedFor ?? '');
+  });
+  // The section headings' counts too, so they match the dots without a re-render.
+  const cfg = store.getState().config;
+  const year = selectedYear && cfg.tax[selectedYear] ? selectedYear : sortedYears(cfg).slice(-1)[0];
+  root.querySelectorAll<HTMLElement>('[data-section-changed]').forEach((el) => {
+    const changed = sectionPaths(cfg, el.dataset.sectionChanged ?? '', year).filter((p) => store.isModified(p)).length;
+    el.hidden = changed === 0;
+    el.textContent = `● ${changed} changed`;
   });
 }

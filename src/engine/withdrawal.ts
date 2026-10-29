@@ -21,10 +21,11 @@ export function phaseSpend(spending: SpendingPhase[], age: number): number {
  * (or since the plan started, if earlier). A phase not linked to inflation is a fixed amount in
  * pounds, so in today's money it shrinks as prices rise (`inflationIndex` = prices vs today).
  */
-export function plannedSpendToday(spending: SpendingPhase[], age: number, startAge: number, inflationIndex: number): number {
+export function plannedSpendToday(spending: SpendingPhase[], age: number, startAge: number, inflationIndex: number, firstYearShort = 0): number {
   const p = phaseAt(spending, age);
   if (!p) return 0;
-  const years = Math.max(0, age - Math.max(p.fromAge, startAge));
+  // `firstYearShort`: the part of the plan's first year that was already over when it started.
+  const years = Math.max(0, age - Math.max(p.fromAge, startAge) - (p.fromAge <= startAge ? firstYearShort : 0));
   const amount = p.annualSpend * Math.pow(1 + (p.changePct ?? 0), years);
   return p.inflationLinked === false ? amount / inflationIndex : amount;
 }

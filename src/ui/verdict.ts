@@ -38,8 +38,13 @@ const SHORTFALL_NOTE_GBP = 500;
  * While anyone still earns, how much a year (today's money, average) the central case draws from
  * savings to cover spending, mortgage, costs, tax and saving: i.e. outgoings above take-home pay.
  */
-export function workingShortfall(r: SimulationResult): { perYear: number; years: number } | null {
-  const rows = r.centralCase.filter((row) => row.salary > 0);
+export function workingShortfall(r: SimulationResult, s: Scenario): { perYear: number; years: number } | null {
+  // Only years in which everyone with a salary is still working: a partner's early retirement is a
+  // planned draw on savings, not overspending.
+  const ages = currentAges(s);
+  const age0 = r.ages[0] ?? 0;
+  const earners = s.people.map((p, i) => ({ p, offset: ages[i] - age0 })).filter(({ p }) => p.salary > 0);
+  const rows = r.centralCase.filter((row) => row.salary > 0 && earners.every(({ p, offset }) => row.age + offset < p.retirementAge));
   if (rows.length === 0) return null;
   // Regular overspending only: one-off costs and buying a home are big planned draws, not a yearly gap.
   const drawn = rows.map((row) => row.drawCash + row.drawGia + row.drawIsa + row.drawLisa + row.drawPension + (row.drawPremiumBonds ?? 0)
@@ -51,10 +56,11 @@ export function workingShortfall(r: SimulationResult): { perYear: number; years:
 }
 
 /** Plain-English note about overspending while working, or null. */
-export function shortfallText(r: SimulationResult): string | null {
-  const w = workingShortfall(r);
+export function shortfallText(r: SimulationResult, s: Scenario): string | null {
+  const w = workingShortfall(r, s);
   if (!w) return null;
-  return `While working, you spend about ${formatMoney(Math.round(w.perYear / 100) * 100)} a year more than you take home (living costs, rent or mortgage, home costs and saving together), so savings cover the gap in ${w.years === 1 ? 'one year' : `${w.years} of the years`}. See Results → Year by year.`;
+  const who = s.people.length > 1 ? 'you are both' : 'you are';
+  return `While ${who} working, your household spends about ${formatMoney(Math.round(w.perYear / 100) * 100)} a year more than it takes home (living costs, rent or mortgage, home costs and saving together), so savings cover the gap in ${w.years === 1 ? 'one year' : `${w.years} of the years`}. See Results → Year by year.`;
 }
 
 /** The lowest spending level the max-spend search tries (a tenth of the plan). */
@@ -166,7 +172,7 @@ export function verdictBlock(r: SimulationResult, s: Scenario, maxSpend: MaxSpen
         : null,
       // The floor case is already said in the lead sentence; other search notes (e.g. annual steps) are shown.
       ...(maxSpend && maxSpend.multiplier <= MAX_SPEND_FLOOR + 1e-9 ? [] : maxSpend?.warnings ?? []).map((w) => h('p', { class: 'warning small' }, w)),
-      shortfallText(r) ? h('p', { class: 'warning small' }, shortfallText(r)) : null,
+      shortfallText(r, s) ? h('p', { class: 'warning small' }, shortfallText(r, s)) : null,
       purchaseText(r, s) ? h('p', { class: 'warning small' }, purchaseText(r, s)) : null,
       s.strategy.kind !== 'fixedReal' ? h('p', { class: 'small' }, flexibleSpendingText(r)) : null,
       h('p', { class: 'muted small' }, `A future counts as a success if ${whatMustBePaid(s)} are paid in full every year until age ${s.sim.horizonAge}. Spare income while working is ${surplusDescription(s)}. Based on ${r.runs.toLocaleString('en-GB')} simulated futures. All amounts are in today’s money.`)));

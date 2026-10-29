@@ -2,12 +2,14 @@ import type { Account, AccountType, Contribution, IncomeStream, Mortgage, OneOff
 import { mortgagePayments } from '../model/mortgageMath';
 import { stampDuty } from '../model/stampDuty';
 import type { Store } from './store';
-import { h, confirmButton } from './dom';
+import { h, confirmButton, toast } from './dom';
 import { numberField, textField, selectField, checkboxField, errorSlot } from './fields';
 import { formatMoney, formatPct, toPercentInput } from './format';
 import { ageAt, isIsoDate, taxYearLabel, taxYearStartYearOf } from '../model/dates';
 import { defaultStatePensionStartAge, minimumPensionAccessAge, statePensionAge } from '../model/ageRules';
 import { ACCOUNT_TYPES, MIN_HISTORY_ROWS, SURPLUS_ACCOUNT_TYPES } from '../model/validateScenario';
+import { blockingIssues } from '../config/configValidate';
+import { fieldFor } from '../config/configFields';
 import { EXAMPLE_SCENARIOS } from './exampleScenarios';
 import { quickStartSection } from './quickStart';
 import { progressSlot } from './results';
@@ -100,6 +102,12 @@ export function refreshTakeHome(root: HTMLElement, store: Store): void {
     el.hidden = text === null;
     el.textContent = text ?? '';
   });
+}
+
+/** A note under a field (a warning when `text` is set; nothing otherwise). */
+function withNote(el: HTMLElement, text: string | null): HTMLElement {
+  if (text) el.append(h('p', { class: 'warning small' }, text));
+  return el;
 }
 
 /**
@@ -220,13 +228,15 @@ function surplusSection(c: TabCtx): HTMLElement {
   const s = sc(c);
   const r = s.surplus ?? { kind: 'cash' as const };
   const value = r.kind === 'invest' ? `invest:${r.accountId}` : r.kind;
-  const targets = s.accounts.filter((a) => SURPLUS_ACCOUNT_TYPES.includes(a.type));
+  // Cash is covered by the first option; offer the accounts it could be invested in.
+  const targets = s.accounts.filter((a) => SURPLUS_ACCOUNT_TYPES.includes(a.type) && a.type !== 'cash');
   return h('section', { class: 'panel-section' }, h('h3', {}, 'Spare income'),
     h('p', { class: 'muted' }, 'In years when income is more than spending, tax, mortgage and the contributions you set up, the difference has to go somewhere. Results → Year by year shows how much there is each year (“Spare income”).'),
     h('div', { class: 'grid' }, wide(selectField({
       label: 'What happens to spare income', value, errorPath: 'surplus',
       help: 'Keeping it as cash is the default. If in real life you spend it, choose “Treat it as spent” (or raise your spending); if you invest it, choose the account. An ISA takes it only up to what is left of the owner’s allowance after their contributions; the rest goes to their GIA, or cash.',
       options: [
+        ...(r.kind === 'invest' && !targets.some((a) => a.id === r.accountId) ? [{ value: `invest:${r.accountId}`, label: 'Choose…', disabled: true }] : []),
         { value: 'cash', label: 'Keep it as cash savings (first cash account)' },
         ...targets.map((a) => ({ value: `invest:${a.id}`, label: `Invest it in ${a.name || ACCOUNT_LABEL[a.type]}${a.type === 'isa' ? ' (within the ISA allowance)' : ''}` })),
         { value: 'spend', label: 'Treat it as spent (not saved)' },
@@ -274,8 +284,10 @@ export function renderOverview(c: TabCtx): HTMLElement {
     const loc = issueLocation(e.path, s);
     return h('li', {}, h('strong', {}, `${loc.item}: `), e.message, ' ', h('a', { href: `#/${loc.tab}` }, `Fix in ${loc.tabLabel} →`));
   });
-  const moreIssues = st.scenarioErrors.length - issues.length;
-  const shortfall = r ? shortfallText(r) : null;
+  const ruleIssues = blockingIssues(st.errors).slice(0, 4).map((e) => h('li', {}, h('strong', {}, `${fieldFor(e.path)?.label ?? e.path}: `), e.message, ' ', h('a', { href: '#/rules' }, 'Fix in Rules & Assumptions →')));
+  issues.push(...ruleIssues);
+  const moreIssues = st.scenarioErrors.length + blockingIssues(st.errors).length - issues.length;
+  const shortfall = r ? shortfallText(r, s) : null;
   const purchase = r ? purchaseText(r, s) : null;
   const gapNote = housingGapText(s);
   const warnings = [...(gapNote ? [gapNote] : []), ...(purchase ? [purchase] : []), ...(shortfall ? [shortfall] : []), ...(r?.warnings ?? [])].map((w) => h('li', {}, w));
@@ -437,7 +449,7 @@ function accountFields(c: TabCtx, a: Account, i: number): Node[] {
   const sum = al.equities + al.bonds + al.cash + al.property;
   const fields: Node[] = [
     textField({ label: 'Name', value: a.name, errorPath: `${pre}.name`, onChange: (v) => setS(c, `${pre}.name`, v) }),
-    selectField({ label: 'Type', value: a.type, errorPath: `${pre}.type`, options: ACCOUNT_TYPES.map((t) => ({ value: t, label: ACCOUNT_LABEL[t] })), onChange: (v) => { setS(c, `${pre}.type`, v); const order = sc(c).withdrawalOrder; if (!order.includes(v)) setS(c, 'withdrawalOrder', [...order, v]); c.rerender(); } }),
+    selectField({ label: 'Type', value: a.type, errorPath: `${pre}.type`, options: ACCOUNT_TYPES.map((t) => ({ value: t, label: ACCOUNT_LABEL[t] })), onChange: (v) => { if (a.name === ACCOUNT_LABEL[a.type]) setS(c, `${pre}.name`, ACCOUNT_LABEL[v]); setS(c, `${pre}.type`, v); const order = sc(c).withdrawalOrder; if (!order.includes(v)) setS(c, 'withdrawalOrder', [...order, v]); c.rerender(); } }),
     selectField({ label: 'Owner', value: String(a.ownerIndex), options: personOptions(s), errorPath: `${pre}.ownerIndex`, help: 'Tax on withdrawals is calculated for the owner.', onChange: (v) => setS(c, `${pre}.ownerIndex`, Number(v)) }),
     numberField({ label: 'Balance today', unit: 'gbp', min: 0, step: 100, value: a.balance, errorPath: `${pre}.balance`, onChange: (v) => setS(c, `${pre}.balance`, v ?? 0) }),
     numberField({ label: 'Annual fee', unit: 'pct', min: 0, max: 0.1, step: 0.0001, value: a.annualFeePct, errorPath: `${pre}.annualFeePct`, help: 'Charges taken as a percentage of the balance each year, e.g. fund charges plus a percentage platform fee.', onChange: (v) => setS(c, `${pre}.annualFeePct`, v ?? 0) }),
@@ -478,11 +490,11 @@ function accountFields(c: TabCtx, a: Account, i: number): Node[] {
     errorSlot(`${pre}.allocation`));
   fields.push(alloc);
   if (a.type === 'gia') {
-    fields.push(numberField({ label: 'Cost basis', unit: 'gbp', nullable: true, min: 0, step: 100, value: a.giaCostBasis, placeholder: 'same as balance', errorPath: `${pre}.giaCostBasis`, help: 'What you originally paid in. Gains above this are subject to Capital Gains Tax when sold.', onChange: (v) => setS(c, `${pre}.giaCostBasis`, v ?? undefined) }));
+    fields.push(numberField({ label: 'Cost basis', unit: 'gbp', nullable: true, min: 0, step: 100, value: a.giaCostBasis, placeholder: 'same as balance', errorPath: `${pre}.giaCostBasis`, help: 'What you originally paid in. Gains above this are subject to Capital Gains Tax when sold. More than the balance means you are sitting on a loss.', onChange: (v) => setS(c, `${pre}.giaCostBasis`, v ?? undefined) }));
   }
   if (a.type === 'dcPension') {
     fields.push(
-      numberField({ label: 'Your access age', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: a.pensionAccessAge, placeholder: owner ? `${minimumPensionAccessAge(owner.dateOfBirth, c.store.getState().config.pensionAccess)} (from the rules)` : 'from the rules', errorPath: `${pre}.pensionAccessAge`, help: 'Leave blank to use the minimum pension age from the rules: 55 only if you reach 57 on or before 6 April 2028, otherwise 57. Enter your own age if you have a protected pension age (e.g. 55 under your scheme rules) or plan to wait longer. The pension is never touched before this age.', onChange: (v) => setS(c, `${pre}.pensionAccessAge`, v ?? undefined) }),
+      withNote(numberField({ label: 'Your access age', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: a.pensionAccessAge, placeholder: owner ? `${minimumPensionAccessAge(owner.dateOfBirth, c.store.getState().config.pensionAccess)} (from the rules)` : 'from the rules', errorPath: `${pre}.pensionAccessAge`, help: 'Leave blank to use the minimum pension age from the rules: 55 only if you reach 57 on or before 6 April 2028, otherwise 57. Enter your own age if you have a protected pension age (e.g. 55 under your scheme rules) or plan to wait longer. The pension is never touched before this age.', onChange: (v) => setS(c, `${pre}.pensionAccessAge`, v ?? undefined) }), owner && a.pensionAccessAge !== undefined && a.pensionAccessAge < minimumPensionAccessAge(owner.dateOfBirth, c.store.getState().config.pensionAccess) ? `Below the normal minimum pension age (${minimumPensionAccessAge(owner.dateOfBirth, c.store.getState().config.pensionAccess)}): only right if your scheme gives you a protected pension age.` : null),
       numberField({ label: 'Tax-free cash already taken', unit: 'gbp', nullable: true, min: 0, step: 100, value: a.taxFreeCashTaken, placeholder: '0', errorPath: `${pre}.taxFreeCashTaken`, help: 'Counts against the Lump Sum Allowance.', onChange: (v) => setS(c, `${pre}.taxFreeCashTaken`, v ?? undefined) }),
       selectField({ label: 'Tax relief method', value: a.pensionReliefMethod ?? 'netPay', options: [{ value: 'netPay', label: 'Net pay (workplace)' }, { value: 'reliefAtSource', label: 'Relief at source (SIPP)' }], errorPath: `${pre}.pensionReliefMethod`, help: 'Net pay: contributions come off taxable pay. Relief at source: you pay 80% and the provider claims basic-rate relief; higher-rate relief extends your basic band.', onChange: (v) => setS(c, `${pre}.pensionReliefMethod`, v) }),
     );
@@ -517,12 +529,17 @@ export function renderAccounts(c: TabCtx): HTMLElement {
     onRemove: (i) => {
       const cur = sc(c);
       const id = cur.accounts[i].id;
+      const gone = cur.contributions.filter((x) => x.accountId === id).length;
+      const surplusHere = cur.surplus?.kind === 'invest' && cur.surplus.accountId === id;
       c.store.setScenario({
         ...cur,
         accounts: cur.accounts.filter((_, k) => k !== i),
         contributions: cur.contributions.filter((x) => x.accountId !== id),
         properties: cur.properties.map((p) => (p.downsize?.releaseToAccountId === id ? { ...p, downsize: { ...p.downsize, releaseToAccountId: cur.accounts.find((a) => a.type === 'cash' && a.id !== id)?.id ?? '' } } : p)),
+        ...(surplusHere ? { surplus: { kind: 'cash' } } : {}),
       });
+      const notes = [gone ? `${gone} contribution${gone === 1 ? '' : 's'} into it removed` : '', surplusHere ? 'spare income now kept as cash' : ''].filter(Boolean);
+      if (notes.length) toast(`Account removed: ${notes.join('; ')}.`);
     },
     adders: h('div', { class: 'adders' }, h('span', { class: 'muted' }, 'Add: '), ...ACCOUNT_TYPES.map((t) => h('button', { type: 'button', class: 'btn small', onclick: () => add(t) }, `+ ${SHORT_LABEL[t]}`))),
   });
@@ -553,7 +570,14 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
     selectField({ label: k.type === 'employerPctOfSalary' ? 'Employee (whose salary)' : 'Paid by', value: String(k.personIndex), options: personOptions(s), errorPath: `${pre}.personIndex`, help: 'Whose salary and allowances this uses.', onChange: (v) => setS(c, `${pre}.personIndex`, Number(v)) }),
     selectField({ label: 'Type', value: k.type, errorPath: `${pre}.type`,
       options: (Object.keys(CONTRIB_LABEL) as Contribution['type'][]).map((t) => ({ value: t, label: CONTRIB_LABEL[t], disabled: t === 'employerPctOfSalary' && acc !== undefined && acc.type !== 'dcPension' })),
-      onChange: (v) => { setS(c, `${pre}.type`, v); c.rerender(); } }),
+      onChange: (v) => {
+        // A pound amount makes no sense as a percentage (and the reverse): start from a typical value.
+        const wasPct = isPct;
+        const nowPct = v === 'pctOfSalary' || v === 'employerPctOfSalary';
+        if (wasPct !== nowPct) setS(c, `${pre}.amount`, nowPct ? 0.05 : v === 'lumpSum' ? 5000 : 200);
+        setS(c, `${pre}.type`, v);
+        c.rerender();
+      } }),
     numberField({ label: isPct ? 'Percentage of gross salary' : k.type === 'fixedMonthly' ? 'Amount' : 'Amount', unit: isPct ? 'pct' : k.type === 'fixedMonthly' ? 'gbpMonth' : 'gbp', min: 0, step: isPct ? 0.005 : 10, value: k.amount, errorPath: `${pre}.amount`,
       help: acc?.type === 'dcPension' ? 'For pensions, enter the GROSS amount reaching the pot, including tax relief. Your own payments are limited to your salary, or £3,600 a year gross into a relief-at-source pension if you earn less.' : acc?.type === 'lisa' ? 'Amount you pay in; the 25% bonus is added on top.' : 'Paid from take-home pay.',
       onChange: (v) => setS(c, `${pre}.amount`, v ?? 0) }),
@@ -561,10 +585,10 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
       ? { label: 'Paid at', lumpSum: true, help: `${payerName === 'You' ? 'Your' : `${payerName}’s`} age in the tax year the money goes in; it is paid in at the end of that tax year. Blank means this tax year. A one-off payment is only made at its age, so it cannot be in the past: money already paid in belongs in the account’s balance.` }
       : { label: 'Starts at', lumpSum: false, help: payerName === 'You' ? 'Leave blank if you already pay this. Otherwise your age when payments start.' : `Leave blank if ${payerName} already pays this. Otherwise ${payerName}’s age when payments start.` }),
     k.type === 'lumpSum' ? selectField({ label: 'Paid from', value: k.source ?? 'pay', errorPath: `${pre}.source`,
-      help: 'Outside money (an inheritance, a gift, a bonus already received) is added to the account without coming out of your income or other accounts, and is paid at this age even after you stop work. ISA, LISA and pension allowances still apply. For a pension it must be relief at source: you pay in the amount less 20% and the provider adds the rest.',
+      help: 'Outside money (an inheritance, a gift, a bonus already received) is added to the account without coming out of your income or other accounts, and is paid at this age even after you stop work. ISA, LISA and pension allowances still apply. Into a pension it must use relief at source (set on the Accounts tab), as net pay only works through payroll. For a pension it must be relief at source: you pay in the amount less 20% and the provider adds the rest.',
       options: [{ value: 'pay', label: 'My pay or savings' }, { value: 'external', label: 'Outside money (gift, inheritance…)' }],
       onChange: (v) => { setS(c, `${pre}.source`, v); c.rerender(); } }) : null,
-    outside ? null : selectField({ label: 'Stop paying', value: stops, errorPath: `${pre}.stopsWith`,
+    k.type === 'lumpSum' ? null : selectField({ label: 'Stop paying', value: stops, errorPath: `${pre}.stopsWith`,
       help: 'Payments after stopping work come out of your savings and investments, like spending does. A percentage of salary stops anyway, as there is no salary.',
       options: [
         { value: 'work', label: `When ${payerName === 'You' ? 'you stop' : `${payerName} stops`} work (age ${payer?.retirementAge ?? '—'})` },
@@ -577,7 +601,7 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
         if (v !== 'work' && !(k.endAge > k.startAge && k.endAge < MAX_CONTRIBUTION_AGE)) setS(c, `${pre}.endAge`, payer?.retirementAge ?? k.startAge + 1);
         c.rerender();
       } }),
-    stops === 'work' || outside ? null : withTaxYear(c, numberField({ label: 'Until (not including)', unit: 'age', min: 0, max: 120, step: 1, value: k.endAge, errorPath: `${pre}.endAge`, help: stops === 'age' ? 'Payments also stop when the payer stops work, if that comes first.' : 'Payments carry on after the payer stops work, until this age.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? 0) }), k.personIndex, 'until', ''),
+    stops === 'work' || k.type === 'lumpSum' ? null : withTaxYear(c, numberField({ label: 'Until (not including)', unit: 'age', min: 0, max: 120, step: 1, value: k.endAge, errorPath: `${pre}.endAge`, help: stops === 'age' ? 'Payments also stop when the payer stops work, if that comes first.' : 'Payments carry on after the payer stops work, until this age.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? 0) }), k.personIndex, 'until', ''),
   ].filter((x): x is HTMLElement => x !== null);
   if (!isPct) fields.push(checkboxField({ label: 'Rises with inflation', checked: k.escalatesWithInflation, onChange: (v) => setS(c, `${pre}.escalatesWithInflation`, v) }));
   return fields;
@@ -669,7 +693,7 @@ function propertyFields(c: TabCtx, p: Property, i: number): Node[] {
     numberField({ label: 'Running costs per year', unit: 'gbp', min: 0, step: 100, value: p.runningCostsAnnual, errorPath: `${pre}.runningCostsAnnual`, help: 'Fixed costs such as insurance, council tax or service charges, in today’s money.', onChange: (v) => setS(c, `${pre}.runningCostsAnnual`, v ?? 0) }),
     numberField({ label: 'Plus % of home value per year', unit: 'pct', nullable: true, min: 0, max: 0.1, step: 0.001, value: p.runningCostsPctOfValue, placeholder: 'none', errorPath: `${pre}.runningCostsPctOfValue`, help: 'Costs that grow with the home’s value, such as maintenance (often 1% a year). Added to the fixed amount.', onChange: (v) => setS(c, `${pre}.runningCostsPctOfValue`, v ?? undefined) }),
     numberField({ label: 'Rental income per year', unit: 'gbp', nullable: true, min: 0, step: 100, value: p.rentalIncomeAnnual, placeholder: 'not let', errorPath: `${pre}.rentalIncomeAnnual`, help: 'Taxable income, split equally between the people. From April 2027 rent is taxed at its own, higher rates (Rules & Assumptions → Savings & dividends).', onChange: (v) => setS(c, `${pre}.rentalIncomeAnnual`, v ?? undefined) }),
-    checkboxField({ label: 'Main residence', checked: p.isMainResidence, errorPath: `${pre}.isMainResidence`, help: 'Only the main residence can be downsized. Its sale is free of CGT.', onChange: (v) => { setS(c, `${pre}.isMainResidence`, v); c.rerender(); } }),
+    checkboxField({ label: 'Main residence', checked: p.isMainResidence, errorPath: `${pre}.isMainResidence`, help: 'Only the main residence can be downsized. Its sale is free of CGT.', onChange: (v) => { setS(c, `${pre}.isMainResidence`, v); if (!v && sc(c).properties[i]?.downsize) setS(c, `${pre}.downsize`, undefined); c.rerender(); } }),
   ];
   const m = p.mortgage;
   const payId = `mortgage-pay-${i}`;
@@ -702,8 +726,9 @@ function propertyFields(c: TabCtx, p: Property, i: number): Node[] {
     fields.push(h('fieldset', { class: 'full' }, h('legend', {}, 'Downsizing'),
       checkboxField({ label: 'Plan to downsize', checked: d !== undefined, onChange: (v) => { setS(c, `${pre}.downsize`, v ? { atAge: 70, newValue: Math.round(p.value * 0.6), releaseToAccountId: cash?.id ?? s.accounts[0]?.id ?? '' } : undefined); c.rerender(); } }),
       d ? h('div', { class: 'grid' },
-        numberField({ label: 'At age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: d.atAge, errorPath: `${pre}.downsize.atAge`, onChange: (v) => setS(c, `${pre}.downsize.atAge`, v ?? 0) }),
-        numberField({ label: 'New home value (today’s money)', unit: 'gbp', min: 0, step: 1000, value: d.newValue, errorPath: `${pre}.downsize.newValue`, onChange: (v) => setS(c, `${pre}.downsize.newValue`, v ?? 0) }),
+        withTaxYear(c, numberField({ label: 'At age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: d.atAge, errorPath: `${pre}.downsize.atAge`, onChange: (v) => setS(c, `${pre}.downsize.atAge`, v ?? 0) }), 0, 'from', ''),
+        numberField({ label: 'New home value (today’s money)', unit: 'gbp', min: 0, step: 1000, value: d.newValue, errorPath: `${pre}.downsize.newValue`, help: 'Less than the current value releases money to the account below. More than it (moving up) takes the difference, plus any mortgage left, from your savings when you move.', onChange: (v) => { setS(c, `${pre}.downsize.newValue`, v ?? 0); c.rerender(); } }),
+        d.newValue > p.value ? h('p', { class: 'warning small full' }, `A dearer home: about ${formatMoney(d.newValue - p.value)} (today’s money) plus any mortgage left comes out of your savings at ${d.atAge}.`) : null,
         selectField({ label: 'Pay released money into', value: d.releaseToAccountId, errorPath: `${pre}.downsize.releaseToAccountId`, options: s.accounts.filter((a) => a.type === 'cash' || a.type === 'gia').map((a) => ({ value: a.id, label: a.name })), help: 'A cash account or GIA. Money can be moved into ISAs or pensions only within their allowances.', onChange: (v) => setS(c, `${pre}.downsize.releaseToAccountId`, v) }),
       ) : null));
   }
@@ -792,6 +817,9 @@ export function renderProperty(c: TabCtx): HTMLElement {
 
 // ---------------- Spending & Strategy ----------------
 
+/** Whether the Advanced settings are open, so a re-render (e.g. New random seed) does not shut them. */
+let advancedOpen = false;
+
 /** Short note after a phase heading, e.g. " · falls 1% a year · fixed in pounds". */
 function phaseSummary(ph: SpendingPhase): string {
   const parts: string[] = [];
@@ -870,7 +898,12 @@ export function renderSpending(c: TabCtx): HTMLElement {
     [next[i], next[i + d]] = [next[i + d], next[i]];
     setS(c, 'withdrawalOrder', next);
     c.rerender();
-    requestAnimationFrame(() => document.getElementById(`order-${next[i + d]}-${d < 0 ? 'up' : 'down'}`)?.focus());
+    // Keep focus on the moved item: its same-direction button, or the other one once it reaches an end.
+    requestAnimationFrame(() => {
+      const same = document.getElementById(`order-${next[i + d]}-${d < 0 ? 'up' : 'down'}`) as HTMLButtonElement | null;
+      const other = document.getElementById(`order-${next[i + d]}-${d < 0 ? 'down' : 'up'}`) as HTMLButtonElement | null;
+      (same && !same.disabled ? same : other)?.focus();
+    });
   };
   const missing = ACCOUNT_TYPES.filter((t) => !order.includes(t));
   const histOk = st.config.historicalReturns.length >= MIN_HISTORY_ROWS;
@@ -930,7 +963,7 @@ export function renderSpending(c: TabCtx): HTMLElement {
           h('button', { type: 'button', class: 'btn small', id: `order-${t}-down`, disabled: i === order.length - 1, 'aria-label': `Move ${ACCOUNT_LABEL[t]} down`, onclick: () => move(i, 1) }, '↓'),
           h('button', { type: 'button', class: 'btn small ghost', 'aria-label': `Remove ${ACCOUNT_LABEL[t]} from the order`, onclick: () => { setS(c, 'withdrawalOrder', order.filter((x) => x !== t)); c.rerender(); } }, '✕'))))),
       missing.length > 0 ? h('div', { class: 'adders' }, h('span', { class: 'muted' }, 'Add: '), ...missing.map((t) => h('button', { type: 'button', class: 'btn small', onclick: () => { setS(c, 'withdrawalOrder', [...order, t]); c.rerender(); } }, `+ ${SHORT_LABEL[t]}`))) : null),
-    h('details', { class: 'panel-section advanced', id: 'simulation', open: st.scenarioErrors.some((e) => e.path.startsWith('sim.')) }, h('summary', {}, h('h3', {}, 'Advanced: simulation settings')),
+    h('details', { class: 'panel-section advanced', id: 'simulation', open: advancedOpen || st.scenarioErrors.some((e) => e.path.startsWith('sim.')), ontoggle: (e: Event) => { advancedOpen = (e.target as HTMLDetailsElement).open; } }, h('summary', {}, h('h3', {}, 'Advanced: simulation settings')),
       h('p', { class: 'muted' }, 'How many futures are simulated and how. The defaults suit most plans.'),
       h('div', { class: 'grid' },
         numberField({ label: 'Number of simulations', unit: 'count', min: 1, max: 100000, step: 100, value: s.sim.runs, errorPath: 'sim.runs', help: 'More runs give smoother results but take longer. 5,000 is a good default.', onChange: (v) => setS(c, 'sim.runs', Math.round(v ?? 0)) }),

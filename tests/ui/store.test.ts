@@ -112,7 +112,7 @@ describe('export / import', () => {
     bad.scenario.accounts = [];
     const r = s.importJson(JSON.stringify(bad));
     expect(r.ok).toBe(false);
-    expect(r.errors.some((e) => e.includes('incomeTaxBands[0].rate'))).toBe(true);
+    expect(r.errors.some((e) => /Rules, .*[Rr]ate/.test(e))).toBe(true);   // named by its label, not its path
     expect(r.errors.some((e) => e.includes('cash account'))).toBe(true);
     expect(s.getState().scenario).toEqual(before.scenario);
     expect(s.getState().config).toEqual(before.config);
@@ -264,5 +264,26 @@ describe('results from a replaced plan', () => {
     expect(s.updating()).toBe(true);
     finish?.();
     expect(s.planResults()).toBeDefined();
+  });
+});
+
+describe('what-if spending with a flexible strategy', () => {
+  it('scales the strategy’s own numbers, so the slider changes the result', async () => {
+    const { whatIfScenario } = await import('../../src/ui/whatIf');
+    const s = small();
+    s.strategy = { kind: 'percentOfPortfolio', pct: 0.04 };
+    const v = whatIfScenario(s, undefined, 150);
+    expect(v.strategy).toEqual({ kind: 'percentOfPortfolio', pct: 0.06 });
+    expect(v.spending[0].annualSpend).toBe(Math.round(s.spending[0].annualSpend * 1.5));
+  });
+  it('an export from an older version missing newer fields still imports', () => {
+    const s = new Store({ initialScenario: small(), autoRun: false });
+    const old = JSON.parse(s.exportJson());
+    delete old.scenario.sim.targetSuccessRate;
+    delete old.scenario.incomeStreams;
+    delete old.config.tax['2026/27'].stampDuty;
+    expect(s.importJson(JSON.stringify(old)).ok).toBe(true);
+    expect(s.getState().scenario.sim.targetSuccessRate).toBe(0.9);
+    expect(s.getState().config.tax['2026/27'].stampDuty.ftbNilBand).toBe(300000);
   });
 });

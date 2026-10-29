@@ -48,7 +48,7 @@ function wrap(id: string, opts: FieldBase, control: HTMLElement, unitText = ''):
     head.append(btn);
   }
   if (opts.extra) head.append(opts.extra);
-  const err = h('p', { class: 'error', id: errId, 'data-error-for': opts.errorPath ?? '', 'aria-live': 'polite' });
+  const err = h('p', { class: 'error', id: errId, 'data-error-for': opts.errorPath ?? '' });
   return h('div', { class: 'field' }, head, control, helpEl, err);
 }
 
@@ -145,8 +145,20 @@ export function checkboxField(o: CheckboxOpts): HTMLElement {
   const box = h('input', { id, type: 'checkbox', checked: o.checked, disabled: o.disabled });
   box.addEventListener('change', () => o.onChange(box.checked));
   const err = h('p', { class: 'error', id: `${id}-err`, 'data-error-for': o.errorPath ?? '' });
-  box.setAttribute('aria-describedby', `${id}-err`);
-  return h('div', { class: 'field check' }, h('label', { for: id }, box, ` ${o.label}`), o.help ? h('p', { class: 'help' }, o.help, o.helpExtra ? ' ' : null, o.helpExtra ?? null) : null, o.extra ?? null, err);
+  const helpId = o.help ? `${id}-help` : undefined;
+  box.setAttribute('aria-describedby', [helpId, `${id}-err`].filter(Boolean).join(' '));
+  let helpEl: HTMLElement | null = null;
+  let btn: HTMLElement | null = null;
+  if (o.help && helpId) {
+    helpEl = h('p', { class: 'help', id: helpId, hidden: true }, o.help, o.helpExtra ? ' ' : null, o.helpExtra ?? null);
+    btn = h('button', { type: 'button', class: 'help-btn', 'aria-expanded': 'false', 'aria-controls': helpId, title: o.help, 'aria-label': `Help: ${o.label}` }, '?');
+    btn.addEventListener('click', () => {
+      const open = btn?.getAttribute('aria-expanded') !== 'true';
+      btn?.setAttribute('aria-expanded', String(open));
+      if (helpEl) helpEl.hidden = !open;
+    });
+  }
+  return h('div', { class: 'field check' }, h('div', { class: 'field-head' }, h('label', { for: id }, box, ` ${o.label}`), btn), helpEl, o.extra ?? null, err);
 }
 
 /** Error slot not attached to a single input (e.g. list-level errors). */

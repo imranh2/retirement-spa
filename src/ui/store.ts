@@ -11,6 +11,9 @@ import { parseHistoricalCsv, type CsvParseResult } from '../config/historicalCsv
 import { taxYearLabel, taxYearStartYear } from '../model/dates';
 import { EXAMPLE_SCENARIOS } from './exampleScenarios';
 import type { SimRunner } from './simClient';
+import { issueLocation } from './scenarioTabs';
+import { fieldFor } from '../config/configFields';
+import { todayIso } from '../model/dates';
 
 export const STORAGE_KEYS = {
   scenario: 'ukplanner.scenario.v1',
@@ -23,6 +26,13 @@ export const STORAGE_KEYS = {
 function withMirror(path: string): string[] {
   const m = /^market\.correlations\[(\d+)\]\[(\d+)\]$/.exec(path);
   return m && m[1] !== m[2] ? [path, `market.correlations[${m[2]}][${m[1]}]`] : [path];
+}
+
+/** A plan saved by an older version may lack fields added since: fill them so it still loads. */
+function migrateScenario(s: Scenario): Scenario {
+  const given = s as Partial<Scenario>;
+  const sim: Scenario['sim'] = { runs: 5000, seed: 20261027, horizonAge: 95, startDate: todayIso(), stepsPerYear: 1, returnModel: 'lognormal', targetSuccessRate: 0.9, ...(given.sim ?? {}) };
+  return { ...s, contributions: given.contributions ?? [], properties: given.properties ?? [], incomeStreams: given.incomeStreams ?? [], sim };
 }
 
 export const SAVE_DEBOUNCE_MS = 400;
@@ -71,9 +81,9 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 /** Loose shape checks before full validation, so corrupt data never crashes the app. */
+/** The essentials of a plan; lists added in later versions may be missing (migrateScenario fills them). */
 function looksLikeScenario(v: unknown): v is Scenario {
-  return isObject(v) && Array.isArray(v.people) && Array.isArray(v.accounts) && Array.isArray(v.contributions)
-    && Array.isArray(v.properties) && Array.isArray(v.incomeStreams) && Array.isArray(v.spending)
+  return isObject(v) && Array.isArray(v.people) && Array.isArray(v.accounts) && Array.isArray(v.spending)
     && isObject(v.strategy) && Array.isArray(v.withdrawalOrder) && isObject(v.sim);
 }
 function looksLikeConfig(v: unknown): v is ConfigBundle {
@@ -425,13 +435,13 @@ export class Store {
     if (!looksLikeScenario(data.scenario)) errors.push('The file has no valid scenario.');
     if (!looksLikeConfig(data.config)) errors.push('The file has no valid rules and assumptions (config).');
     if (errors.length > 0) return { ok: false, errors };
-    const scenario = data.scenario as Scenario;
+    const scenario = migrateScenario(data.scenario as Scenario);
     const config = migrateConfig(data.config as ConfigBundle, this.defaults);
     let issues: string[];
     try {
       issues = [
-        ...blockingIssues(validateConfig(config)).map((i) => `Rules: ${i.path}: ${i.message}`),
-        ...validateScenario(scenario, config).map((i) => `Scenario: ${i.path}: ${i.message}`),
+        ...blockingIssues(validateConfig(config)).map((i) => `Rules, ${fieldFor(i.path)?.label ?? i.path}: ${i.message}`),
+        ...validateScenario(scenario, config).map((i) => `${issueLocation(i.path, scenario).item}: ${i.message}`),
       ];
     } catch (e) {
       issues = [`The file is malformed: ${e instanceof Error ? e.message : String(e)}`];
