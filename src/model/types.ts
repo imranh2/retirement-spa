@@ -135,6 +135,8 @@ export interface Scenario {
   strategy: WithdrawalStrategy;
   withdrawalOrder: AccountType[];    // e.g. ['cash','gia','isa','lisa','dcPension']
   surplus?: SurplusRule;             // default { kind: 'cash' }
+  /** Draw pensions first up to the personal allowance or basic-rate band each year; default 'inOrder'. */
+  pensionDrawdown?: 'inOrder' | 'allowance' | 'basicRate';
   sim: SimSettings;
 }
 
@@ -155,6 +157,8 @@ export interface CentralCaseRow {
   portfolioEnd: number; propertyEquityEnd: number; mortgageBalanceEnd: number;
   /** Price level at the start and end of the year (1 = today), to turn the row into actual pounds. */
   priceIndex?: number; priceIndexEnd?: number;
+  /** Months of the tax year the row covers: fewer than 12 for a plan starting part-way through it. */
+  months?: number;
 }
 
 export interface SimulationResult {
@@ -167,6 +171,8 @@ export interface SimulationResult {
   netWorthReal: PercentileBands;     // portfolio + property equity
   netWorthNominal?: PercentileBands; // lets the Real/Nominal toggle apply to net worth
   taxPaidTotal: { median: number; p10: number; p90: number };       // lifetime, real
+  /** 1 future in 10 has a retirement year with spending at or below this (today's money a year; 0 = ran out). */
+  retirementSpendLow?: number;
   taxPaidByAgeMeanReal: number[];
   /** Added: share of runs that met spending in full in each year; the per-age means below average over these runs. */
   fundedShareByAge?: number[];

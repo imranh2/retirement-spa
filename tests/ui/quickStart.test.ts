@@ -6,7 +6,8 @@ import { simulate } from '../../src/engine/simulate';
 import { TEST_CONFIG } from '../fixtures/testConfig';
 
 const START = '2026-10-29';
-const answers = (over: Partial<QuickStartInput> = {}): QuickStartInput => ({ ...quickStartDefaults(START), ...over });
+// The form starts with no date of birth; these tests answer as a 40-year-old unless they say otherwise.
+const answers = (over: Partial<QuickStartInput> = {}): QuickStartInput => ({ ...quickStartDefaults(), dateOfBirth: '1986-10-29', ...over });
 const build = (over: Partial<QuickStartInput> = {}) => quickStartScenario(answers(over), START, 50_000);
 
 describe('quick start', () => {

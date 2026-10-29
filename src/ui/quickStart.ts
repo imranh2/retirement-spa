@@ -1,6 +1,6 @@
 import type { Account, AccountType, AssetAllocation, Contribution, Property, Scenario } from '../model/types';
 import type { Store } from './store';
-import { addYears, ageAt, isIsoDate, todayIso } from '../model/dates';
+import { ageAt, isIsoDate, todayIso } from '../model/dates';
 import { CASH, sim } from './exampleScenarios';
 import { h, confirmButton } from './dom';
 import { numberField, selectField, textField } from './fields';
@@ -45,9 +45,10 @@ export interface QuickStartInput {
   lumpSumAge: number | null;   // null = now
 }
 
-export function quickStartDefaults(startDate: string = todayIso()): QuickStartInput {
+/** Starting answers. The date of birth is left blank so nobody builds a plan on a made-up one. */
+export function quickStartDefaults(): QuickStartInput {
   return {
-    dateOfBirth: addYears(startDate, -40), salary: 40000, stopWorkAge: 67, spending: 25000, leftover: 'spend',
+    dateOfBirth: '', salary: 40000, stopWorkAge: 67, spending: 25000, leftover: 'spend',
     cash: 10000, premiumBonds: 0, isa: 0, gia: 0, pension: 60000, pensionType: 'workplace',
     pensionPct: 0.05, employerPct: 0.03, isaMonthly: 0,
     homeValue: 0, homeCostsPct: 0.01, mortgageBalance: 0, mortgageYears: 0, mortgageRate: 0.045, mortgageFixedYears: 2, mortgageRateAfterFix: null,
@@ -114,6 +115,7 @@ export function quickStartScenario(q: QuickStartInput, startDate: string = today
     withdrawalOrder: order.filter((t) => accounts.some((a) => a.type === t)),
     sim: { ...sim(startDate), runs: QUICK_START_RUNS },
     // Spare income: spent, kept as cash, or invested in the ISA (overflow to the GIA).
+    pensionDrawdown: 'allowance',
     surplus: q.leftover === 'spend' ? { kind: 'spend' } : q.leftover === 'cash' ? { kind: 'cash' } : { kind: 'invest', accountId: 'isa' },
   };
 }

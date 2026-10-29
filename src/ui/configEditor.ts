@@ -3,7 +3,7 @@ import { CONFIG_FIELDS, GROUPS, expandFields, fieldFor } from '../config/configF
 import { getPath } from '../config/paths';
 import { validateCorrelations } from '../config/configValidate';
 import { historicalToCsv } from '../config/historicalCsv';
-import { taxYearStartYear } from '../model/dates';
+import { taxYearStartYear, taxYearStartYearOf, todayIso } from '../model/dates';
 import type { Store } from './store';
 import { h, confirmButton, extLink } from './dom';
 import { numberField, textField, selectField, checkboxField, errorSlot, type InputUnit } from './fields';
@@ -41,7 +41,7 @@ function fieldExtras(c: ConfigCtx, path: string, meta: FieldMeta): HTMLElement {
 const OPTION_LABELS: Record<string, string> = {
   adjustedTripleLock: 'Adjusted triple lock (earnings link ends 2030)', tripleLock: 'Triple lock',
   inflation: 'Inflation', earnings: 'Earnings', fixed: 'Fixed rate', wageGrowth: 'Wage growth', none: 'None (stay frozen)',
-  'england-wales-ni': 'England, Wales and Northern Ireland', scotland: 'Scotland',
+  'england-wales-ni': 'England, Wales & NI', scotland: 'Scotland',
 };
 
 function sourceNote(meta: FieldMeta): HTMLElement | null {
@@ -246,7 +246,9 @@ function defaultsBanner(c: ConfigCtx): HTMLElement | null {
 export function renderConfigEditor(c: ConfigCtx): HTMLElement {
   const cfg = cfgOf(c);
   const years = sortedYears(cfg);
-  if (!selectedYear || !cfg.tax[selectedYear]) selectedYear = years[years.length - 1];
+  // Open on the tax year in force now (the latest that has started), not a future one.
+  const thisYear = taxYearStartYearOf(todayIso());
+  if (!selectedYear || !cfg.tax[selectedYear]) selectedYear = [...years].reverse().find((y) => taxYearStartYear(y) <= thisYear) ?? years[0];
   const year = selectedYear;
 
   const yearPicker = h('div', { class: 'year-picker' },

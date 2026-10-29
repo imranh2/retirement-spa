@@ -1,5 +1,6 @@
 import { createSimulation, earliestRetirementAgeSteps, MAX_SPEND_STEPS, maxSustainableSpendSteps, quickCheck, quickMaxSpendSteps } from '../engine/simulate';
 import type { WorkerRequest, WorkerResponse } from '../model/workerMessages';
+import { QUICK_CHECK_RUNS } from '../engine/constants';
 
 /** Runs per chunk; the worker posts progress and checks for cancellation between chunks. */
 export const WORKER_CHUNK_RUNS = 500;
@@ -96,8 +97,7 @@ ctx.onmessage = (e: MessageEvent<WorkerRequest>) => {
   else if (msg.type === 'cancel') cancelled.add(msg.requestId);
   else if (msg.type === 'quick') {
     // What-if checks run in their own worker instance, one at a time, so no chunking is needed.
-    const QUICK_RUNS = 1000;
-    try { post({ type: 'quickResult', requestId: msg.requestId, result: quickCheck(msg.scenario, msg.config, QUICK_RUNS) }); }
+    try { post({ type: 'quickResult', requestId: msg.requestId, result: quickCheck(msg.scenario, msg.config, QUICK_CHECK_RUNS) }); }
     catch (err) { post({ type: 'error', requestId: msg.requestId, message: err instanceof Error ? err.message : String(err) }); }
   } else if (msg.type === 'retire') {
     latestRetire = msg.requestId;

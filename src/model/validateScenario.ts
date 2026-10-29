@@ -201,6 +201,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
   }
 
   if (s.withdrawalOrder.some((t) => !ACCOUNT_TYPES.includes(t))) add('withdrawalOrder', 'Unknown account type in withdrawal order');
+  if (s.pensionDrawdown !== undefined && !['inOrder', 'allowance', 'basicRate'].includes(s.pensionDrawdown)) add('pensionDrawdown', 'Choose how pension withdrawals are taken');
   if (new Set(s.withdrawalOrder).size !== s.withdrawalOrder.length) add('withdrawalOrder', 'Each account type may appear only once');
   for (const t of new Set(s.accounts.map((a) => a.type))) {
     if (!s.withdrawalOrder.includes(t)) add('withdrawalOrder', `Add ${t} to the withdrawal order, or its accounts will never be drawn`);

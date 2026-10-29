@@ -9,7 +9,7 @@ import { calculateCGT, calculateIncomeTax, calculateNI, type TaxableIncome } fro
 import { accessAgeForAccount } from './pension';
 import { annualEntitlement, deferralMultiplier, qualifyingYearsAtStart, statePensionGrowth, statePensionStartAge } from './statePension';
 import { defaultStatePensionStartAge } from '../model/ageRules';
-import { initialMortgageState, scheduleMonths, scheduleYear, type MortgageState } from './mortgage';
+import { initialMortgageState, scheduleMonths, type MortgageState } from './mortgage';
 import { downsize, rentNominal, runningCostsNominal } from './property';
 import { grossSalary, planContributions, type PersonYear } from './contributions';
 import { emptyByType, executeWithdrawals, householdNeed, phaseSpend, targetSpend, type ByType, type WithdrawalState } from './withdrawal';
@@ -52,6 +52,8 @@ interface Prepared {
   spEntitlementToday: number[];    // annual, today's money
   pensionAccessAge: number[];      // per account (NaN for non-DC)
   firstCash: number;
+  /** Months of the first tax year left from the start date (12 when it starts on 6 April). */
+  firstYearMonths: number;
   surplusTarget: number;            // account index for SurplusRule 'invest', else -1
   initialLsaUsed: number[];
 }
@@ -81,12 +83,51 @@ interface YearRecord {
   spending: number; mortgagePayments: number; mortgageInterest: number; propertyCosts: number;
   incomeTax: number; ni: number; cgt: number;
   savedFromPay: number; spareIncome: number;
+  months: number;          // months of the tax year covered (fewer in a part first year)
   portfolioEnd: number; propertyEquityEnd: number; mortgageBalanceEnd: number;
 }
 
 interface RunFlags { pensionCapped: boolean; allowanceTapered: boolean; isaOverflow: boolean; premiumBondsOverflow: boolean; lisaIneligible: boolean; mortgageLumpSum: boolean; downsizeShortfall: boolean; lsaExhausted: boolean }
 
 interface RunOutcome { failedAtAge: number; flags: RunFlags }
+
+/** Whole months left in the tax year from `startDate` to the next 6 April (1 to 12). */
+export function monthsLeftInTaxYear(startDate: string): number {
+  const end = Date.UTC(taxYearStartYearOf(startDate) + 1, 3, 6);
+  const [y, m, d] = startDate.split('-').map(Number);
+  const days = (end - Date.UTC(y, m - 1, d)) / 86_400_000;
+  const DAYS_PER_MONTH = 365.25 / MONTHS_PER_YEAR;
+  return Math.min(MONTHS_PER_YEAR, Math.max(1, Math.round(days / DAYS_PER_MONTH)));
+}
+
+/** A year's returns compounded over a fraction of it. */
+function partYearReturns(yr: YearReturns, frac: number): YearReturns {
+  const part = (r: number) => Math.pow(1 + r, frac) - 1;
+  return { equities: part(yr.equities), bonds: part(yr.bonds), cash: part(yr.cash), property: part(yr.property), inflation: part(yr.inflation) };
+}
+
+/**
+ * A tax year's rules for the part of it a plan covers: every yearly allowance and threshold
+ * scaled by `frac`, so tax on a part year's income is that share of a full year's tax. Rates,
+ * ages and lifetime limits (Lump Sum Allowance, Premium Bonds holding) are unchanged.
+ */
+export function partYearRules(c: TaxYearConfig, frac: number): TaxYearConfig {
+  const k = (v: number) => v * frac;
+  return {
+    ...c,
+    personalAllowance: k(c.personalAllowance),
+    taperThreshold: k(c.taperThreshold),
+    incomeTaxBands: c.incomeTaxBands.map((b) => ({ ...b, upTo: b.upTo === null ? null : k(b.upTo) })),
+    savings: { ...c.savings, startingRateBand: k(c.savings.startingRateBand), psaBasic: k(c.savings.psaBasic), psaHigher: k(c.savings.psaHigher), psaAdditional: k(c.savings.psaAdditional) },
+    dividends: { ...c.dividends, allowance: k(c.dividends.allowance) },
+    ni: { ...c.ni, primaryThreshold: k(c.ni.primaryThreshold), upperEarningsLimit: k(c.ni.upperEarningsLimit), lowerEarningsLimit: k(c.ni.lowerEarningsLimit) },
+    cgt: { ...c.cgt, annualExempt: k(c.cgt.annualExempt) },
+    isa: { ...c.isa, annualAllowance: k(c.isa.annualAllowance) },
+    lisa: { ...c.lisa, annualAllowance: k(c.lisa.annualAllowance) },
+    pension: { ...c.pension, annualAllowance: k(c.pension.annualAllowance), mpaa: k(c.pension.mpaa), basicAmount: k(c.pension.basicAmount),
+      taperThresholdIncome: k(c.pension.taperThresholdIncome), taperAdjustedIncome: k(c.pension.taperAdjustedIncome), taperMinimumAllowance: k(c.pension.taperMinimumAllowance) },
+  };
+}
 
 /**
  * Premium Bonds hold their value and pay tax-free prizes at an expected rate that does not move
@@ -115,11 +156,11 @@ function prepare(scenario: Scenario, config: ConfigBundle): Prepared {
 
   const sp = config.statePension;
   const yearsFromBase = Math.max(0, startYear - taxYearStartYear(sp.baseTaxYear));
-  // Bring the base-year rate to the start year with mean assumptions, then express it in today's money.
+  // Bring the base-year rate up to the start year with mean assumptions. The start year's prices
+  // are "today's money" (the price index is 1 then), so the uprated rate needs no deflating.
   let baseToToday = 1;
   for (let k = 1; k <= yearsFromBase; k++) {
-    const y = taxYearStartYear(sp.baseTaxYear) + k;
-    baseToToday *= (1 + statePensionGrowth(config.market.inflation.mean, config, y)) / (1 + config.market.inflation.mean);
+    baseToToday *= 1 + statePensionGrowth(config.market.inflation.mean, config, taxYearStartYear(sp.baseTaxYear) + k);
   }
   const spStartAge = people.map((p) => statePensionStartAge(p, config));
   // State Pension age in whole years (ignoring deferral): NI stops and qualifying years stop accruing here.
@@ -145,6 +186,7 @@ function prepare(scenario: Scenario, config: ConfigBundle): Prepared {
     spEntitlementToday,
     pensionAccessAge: scenario.accounts.map((a) => (a.type === 'dcPension' ? accessAgeForAccount(a, people[a.ownerIndex], config.pensionAccess) : Number.NaN)),
     firstCash: scenario.accounts.findIndex((a) => a.type === 'cash'),
+    firstYearMonths: monthsLeftInTaxYear(scenario.sim.startDate),
     surplusTarget: scenario.surplus?.kind === 'invest' ? scenario.accounts.findIndex((a) => scenario.surplus?.kind === 'invest' && a.id === scenario.surplus.accountId) : -1,
     initialLsaUsed: lsa,
   };
@@ -232,7 +274,12 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     const bt = prep.upratedBaseT[t];
     const baseFactor = base === undefined ? 1 : thresholdFactor(config, base, bt >= 0 ? yearStartIndex[bt] : 1, fi);
     const factor = thresholdFactor(config, label, index, fi) / baseFactor;
-    const cfg = factor === 1 ? prep.baseTax[t] : resolveTaxYear(config, label, factor);
+    // The first tax year is usually part-way through: count only the months left in it. Flows and
+    // annual allowances are scaled together, so tax is that share of a full year's tax.
+    const months = t === 0 ? prep.firstYearMonths : MONTHS_PER_YEAR;
+    const frac = months / MONTHS_PER_YEAR;
+    const fullCfg = factor === 1 ? prep.baseTax[t] : resolveTaxYear(config, label, factor);
+    const cfg = frac < 1 ? partYearRules(fullCfg, frac) : fullCfg;
     const ages = prep.ageOffset.map((o) => age0 + o);
     const portfolioAtStart = ws.balances.reduce((s, b) => s + b, 0);
 
@@ -249,6 +296,10 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       if (a < s.startAge || (s.endAge !== undefined && a >= s.endAge)) continue;
       const amt = s.annualAmount * (s.inflationLinked ? index : 1);
       if (s.taxable) taxableStreams[s.personIndex] += amt; else otherStreams[s.personIndex] += amt;
+    }
+    if (frac < 1) {
+      rentTotal *= frac;
+      for (let i = 0; i < nP; i++) { salary[i] *= frac; statePension[i] *= frac; taxableStreams[i] *= frac; otherStreams[i] *= frac; }
     }
     const rentShare = rentTotal / nP;
 
@@ -276,20 +327,20 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       pendingLump[pi] = 0;
       const m = mort[pi];
       if (m && !monthly) {
-        const y = scheduleYear(m);
+        const y = scheduleMonths(m, months);
         mortgagePayments += y.payments;
         mortgageInterest += y.interest;
         if (y.lumpSumDue > 0) { pendingLump[pi] = y.lumpSumDue; flags.mortgageLumpSum = true; }
         mort[pi] = y.endBalance > 0 ? y.endState : null;
       }
-      propertyCosts += runningCostsNominal(p, index, downsized[pi], propValue[pi]);
+      propertyCosts += runningCostsNominal(p, index, downsized[pi], propValue[pi]) * frac;
     });
 
     // Contributions (start of year, before returns)
     const personYears: PersonYear[] = people.map((_, i) => ({ age: ages[i], grossSalary: salary[i], mpaaTriggered: ws.mpaaTriggered[i], otherTaxableIncome: statePension[i] + taxableStreams[i] + rentShare }));
     // Premium Bonds room per person: the holding limit less what they hold now (the limit is not uprated).
     const bondRoom = people.map((_, i) => Math.max(0, cfg.premiumBonds.holdingLimit - accounts.reduce((s, acc, a) => s + (acc.type === 'premiumBonds' && acc.ownerIndex === i ? ws.balances[a] : 0), 0)));
-    const plan = planContributions(scenario.contributions, accounts, people, personYears, t, index, cfg, lisaOpen, bondRoom);
+    const plan = planContributions(scenario.contributions, accounts, people, personYears, t, index, cfg, lisaOpen, bondRoom, frac);
     for (const a of plan.lisaOpened) lisaOpen[a] = true;
     // Spare income this year and where it goes (Scenario.surplus).
     let spareIncome = 0;
@@ -326,7 +377,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     // Estimated GIA income per £ held (interest on bonds/cash + equity dividends). It is taxed
     // below, and as it is reinvested it is added to the cost basis at year end (so it is not taxed again as a gain).
     const giaIncomeRate = accounts.map((acc) => (acc.type === 'gia'
-      ? (acc.allocation.bonds + acc.allocation.cash) * Math.max(0, lastCash) + acc.allocation.equities * market.equityDividendYield : 0));
+      ? ((acc.allocation.bonds + acc.allocation.cash) * Math.max(0, lastCash) + acc.allocation.equities * market.equityDividendYield) * frac : 0));
     const giaStart = [...balances];
     /**
      * Estimated savings interest and dividends for person i on the amounts `held` in each
@@ -344,7 +395,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
           dividends += held(a) * acc.allocation.equities * market.equityDividendYield;
         }
       });
-      return { savings, dividends };
+      return { savings: savings * frac, dividends: dividends * frac };
     };
     /** Money kept all year: the smaller of the start balance and the balance after withdrawals. */
     const keptOf = (after: number[]) => (a: number) => Math.min(giaStart[a], after[a]);
@@ -376,11 +427,12 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       prevInflation,
     });
     if (retired) prevW = W;
+    const spend = W * frac;   // the strategy works in whole years; the first year spends its share
 
     let inflows = rentTotal;
     for (let i = 0; i < nP; i++) inflows += salary[i] + statePension[i] + taxableStreams[i] + otherStreams[i];
     const need = householdNeed({
-      targetSpend: W, mortgagePayments, mortgageLumpSums: lumpSums, propertyCosts, otherOutgoings: downsizeShortfall,
+      targetSpend: spend, mortgagePayments, mortgageLumpSums: lumpSums, propertyCosts, otherOutgoings: downsizeShortfall,
       taxes: baselineTax, contributionsFromTakeHome: plan.fromTakeHome, inflows,
     });
 
@@ -393,7 +445,8 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     let yearCash: number;
     let nextBalances: number[];
     const wPeople = people.map((_, i) => ({ age: ages[i], income: incomes[i], basicBandExtension: plan.reliefAtSourceGross[i] }));
-    const wctx = { accounts, order: scenario.withdrawalOrder, cfg, people: wPeople, pensionAccessAge: prep.pensionAccessAge };
+    const pensionFirst = scenario.pensionDrawdown === 'allowance' || scenario.pensionDrawdown === 'basicRate' ? scenario.pensionDrawdown : undefined;
+    const wctx = { accounts, order: scenario.withdrawalOrder, cfg, people: wPeople, pensionAccessAge: prep.pensionAccessAge, pensionFirst };
 
     if (!monthly) {
       if (need <= 0) {
@@ -432,15 +485,16 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         for (let a = 0; a < accounts.length; a++) creditGiaBasis(a, giaIncomeRate[a] * kept(a));
       }
       // Returns on what is left, then property growth
-      const yr = returns[t];
-      nextBalances = failed ? ws.balances.map(() => 0) : ws.balances.map((b, a) => afterFixedFee(grow(b, a, yr, accounts[a].annualFeePct, prizeRate), a, fixedFee[a] * index));
-      capBonds(nextBalances, cfg.premiumBonds.holdingLimit);
+      const yr = frac < 1 ? partYearReturns(returns[t], frac) : returns[t];
+      const prize = frac < 1 ? prizeRate.map((r) => (r === null ? null : Math.pow(1 + r, frac) - 1)) : prizeRate;
+      nextBalances = failed ? ws.balances.map(() => 0) : ws.balances.map((b, a) => afterFixedFee(grow(b, a, yr, 1 - Math.pow(1 - accounts[a].annualFeePct, frac), prize), a, fixedFee[a] * index * frac));
       if (!failed) addYearEnd(nextBalances);
+      capBonds(nextBalances, cfg.premiumBonds.holdingLimit);   // after year-end payments, so they cannot exceed the limit
       ws = { ...ws, balances: nextBalances };
       properties.forEach((p, pi) => { propValue[pi] *= 1 + propertyNominalReturn(yr, p.growthRealPct, market.property.meanReal); });
       indexEnd = index * (1 + yr.inflation);
-      yearInflation = yr.inflation;
-      yearCash = yr.cash;
+      yearInflation = returns[t].inflation;   // a full year's rate, for the State Pension increase and guardrails
+      yearCash = returns[t].cash;
     } else {
       // Monthly steps (Phase 13): a twelfth of the year's flows each month, monthly returns,
       // pension/GIA draws taken gross with tax settled at the end of the tax year.
@@ -448,13 +502,14 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       const gains = people.map(() => 0);
       const deferCtx = { ...wctx, deferTax: true };
       // Baseline income tax and NI are paid as they go (PAYE-style); only the extra is settled at year end.
-      const regular = (W + propertyCosts + plan.fromTakeHome + baselineTax - inflows) / MONTHS_PER_YEAR;
-      const creditM = plan.credits.map((c) => c / MONTHS_PER_YEAR);
+      const regular = (spend + propertyCosts + plan.fromTakeHome + baselineTax - inflows) / months;
+      const creditM = plan.credits.map((c) => c / months);
+      const firstMonth = MONTHS_PER_YEAR - months;   // a part year runs its last `months` months
       const nA = accounts.length;
       let bal = balances;            // owned by this loop; updated in place
       let monthIndex = index;
       let cashGrowth = 1;
-      for (let k = 0; k < MONTHS_PER_YEAR && !failed; k++) {
+      for (let k = firstMonth; k < MONTHS_PER_YEAR && !failed; k++) {
         let mortgageMonth = 0;
         for (let pi = 0; pi < properties.length; pi++) {
           const m = mort[pi];
@@ -467,7 +522,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         }
         mortgagePayments += mortgageMonth;
         for (let a = 0; a < nA; a++) { bal[a] += creditM[a]; creditGiaBasis(a, creditM[a]); }
-        const needM = regular + mortgageMonth + (k === 0 ? lumpSums + downsizeShortfall : 0);
+        const needM = regular + mortgageMonth + (k === firstMonth ? lumpSums + downsizeShortfall : 0);
         if (needM <= 0) {
           routeSurplus(-needM, bal);
         } else {
@@ -484,7 +539,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
           for (let a = 0; a < nA; a++) bal[a] = afterFixedFee(grow(bal[a], a, mr, monthlyFee[a], prizeRateMonthly), a, fixedFee[a] * index / MONTHS_PER_YEAR);
           capBonds(bal, cfg.premiumBonds.holdingLimit);
         }
-        if (k === MONTHS_PER_YEAR - 1 && !failed) addYearEnd(bal);
+        if (k === MONTHS_PER_YEAR - 1 && !failed) { addYearEnd(bal); capBonds(bal, cfg.premiumBonds.holdingLimit); }
         for (let pi = 0; pi < properties.length; pi++) propValue[pi] *= 1 + propertyNominalReturn(mr, monthlyGrowth[pi].own, monthlyGrowth[pi].market);
         monthIndex *= 1 + mr.inflation;
         cashGrowth *= 1 + mr.cash;
@@ -554,7 +609,8 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         otherIncome: taxableStreams.reduce((s, v) => s + v, 0) + otherStreams.reduce((s, v) => s + v, 0),
         rental: rentTotal,
         draws,
-        spending: W,
+        spending: spend,
+        months,
         mortgagePayments: mortgagePayments + lumpSums,
         mortgageInterest,
         propertyCosts,
@@ -602,6 +658,9 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
   const netWorthReal = full ? new Float64Array(runs * T) : new Float64Array(0);
   const netWorthNominal = full ? new Float64Array(runs * T) : new Float64Array(0);
   const taxPerRun = new Float64Array(runs);
+  // Lowest yearly spending in retirement per run (today's money, whole-year rate); 0 if the money ran out.
+  const lowSpendPerRun = new Float64Array(runs);
+  const retireAge0 = prep.scenario.people[0].retirementAge;
   const taxByAge = new Float64Array(T);
   const income: Record<IncomeKey, Float64Array> = Object.fromEntries(INCOME_KEYS.map((k) => [k, new Float64Array(T)])) as Record<IncomeKey, Float64Array>;
   // Per-age means average over runs that met spending in full that year, so failed runs
@@ -617,7 +676,9 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
       let lastNetWorthReal = 0;
       let lastNetWorthNominal = 0;
       let lastT = -1;
+      let lowSpend = Number.POSITIVE_INFINITY;
       const out = runOne(prep, r, deterministic, mult, full ? (y) => {
+        if (prep.startAge0 + y.t >= retireAge0) lowSpend = Math.min(lowSpend, (y.spending / y.index) * (MONTHS_PER_YEAR / y.months));
         const i = r * T + y.t;
         portfolioReal[i] = y.portfolioEnd / y.indexEnd;
         portfolioNominal[i] = y.portfolioEnd;
@@ -637,6 +698,7 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
         taxPerRun[r] += tax;
       } : null);
       if (full) {
+        lowSpendPerRun[r] = out.failedAtAge >= 0 ? 0 : Number.isFinite(lowSpend) ? lowSpend : 0;
         const fundedYears = out.failedAtAge >= 0 ? lastT : lastT + 1;   // the failure year was not funded in full
         for (let t = 0; t < fundedYears; t++) {
           funded[t] += 1;
@@ -680,7 +742,7 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
       if (a.type !== 'dcPension') return;
       const age = prep.pensionAccessAge[ai];
       const ownerAgeNow = prep.startAge0 + prep.ageOffset[a.ownerIndex];
-      if (age > ownerAgeNow) warnings.push(`${a.name || 'DC pension'} is locked until age ${age}; it is not used before then.`);
+      if (age > ownerAgeNow) warnings.push(`The pension “${a.name || 'DC pension'}” can’t be used until age ${age}, so it is not drawn before then.`);
     });
 
     let centralCase: CentralCaseRow[] = [];
@@ -712,6 +774,7 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
           propertyEquityEnd: y.propertyEquityEnd / y.indexEnd,
           mortgageBalanceEnd: y.mortgageBalanceEnd / y.indexEnd,
           priceIndex: y.index,
+          months: y.months,
           priceIndexEnd: y.indexEnd,
         });
       });
@@ -729,6 +792,7 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
       netWorthReal: full ? percentileBands(netWorthReal, n, T) : empty,
       netWorthNominal: full ? percentileBands(netWorthNominal, n, T) : empty,
       taxPaidTotal: { median: percentile(sortedTax, 0.5), p10: percentile(sortedTax, 0.1), p90: percentile(sortedTax, 0.9) },
+      retirementSpendLow: full ? percentile(Float64Array.from(lowSpendPerRun.subarray(0, n)).sort(), 0.1) : undefined,
       fundedShareByAge: full ? Array.from(funded, (v) => (n > 0 ? v / n : 0)) : undefined,
       taxPaidByAgeMeanReal: meanFunded(taxByAge),
       incomeBySourceMeanReal: Object.fromEntries(INCOME_KEYS.map((k) => [k, meanFunded(income[k])])) as SimulationResult['incomeBySourceMeanReal'],
@@ -787,13 +851,13 @@ export function quickMaxSpendSteps(scenario: Scenario, config: ConfigBundle): Ge
 }
 
 /**
- * A quick success-rate check for what-if sliders: up to `runs` runs, annual steps, no bands.
- * Returns the success rate and depletion histogram (enough for "how long the money lasts").
+ * A quick check for the what-if sliders: up to `runs` runs, annual steps. Returns the success
+ * rate, the depletion histogram ("how long the money lasts") and the portfolio bands for the preview chart.
  */
-export function quickCheck(scenario: Scenario, config: ConfigBundle, runs: number): Pick<SimulationResult, 'ages' | 'runs' | 'successRate' | 'depletionAgeHistogram'> {
+export function quickCheck(scenario: Scenario, config: ConfigBundle, runs: number): Pick<SimulationResult, 'ages' | 'runs' | 'successRate' | 'depletionAgeHistogram' | 'portfolioReal'> {
   const s = scenario.sim.stepsPerYear === MONTHS_PER_YEAR ? { ...scenario, sim: { ...scenario.sim, stepsPerYear: 1 as const } } : scenario;
-  const r = simulate(s, config, { runsOverride: Math.min(scenario.sim.runs, runs), successOnly: true });
-  return { ages: r.ages, runs: r.runs, successRate: r.successRate, depletionAgeHistogram: r.depletionAgeHistogram };
+  const r = simulate(s, config, { runsOverride: Math.min(scenario.sim.runs, runs) });
+  return { ages: r.ages, runs: r.runs, successRate: r.successRate, depletionAgeHistogram: r.depletionAgeHistogram, portfolioReal: r.portfolioReal };
 }
 
 export { MAX_SPEND_STEPS };

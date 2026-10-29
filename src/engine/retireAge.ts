@@ -3,8 +3,8 @@ import type { ConfigBundle } from '../config/configTypes';
 import { canChooseStopWork, currentAges, withRetirementAge, type RetireAgeOutcome } from '../model/retirement';
 import type { SimulateFn } from './stats';
 
-/** Runs per simulation in the search (the same seed every time: common random numbers). */
-const RETIRE_SEARCH_RUNS = 1000;
+/** Runs per simulation in the search: the plan's own (the same seed every time: common random numbers). */
+const RETIRE_SEARCH_RUNS = 100_000;
 
 /**
  * Earliest age at which person 1 can stop work and still meet the target success rate

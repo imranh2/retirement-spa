@@ -4,7 +4,7 @@ import { h, downloadText, toast } from './dom';
 import { showErrors } from './fields';
 import { formatMoney, formatMoneyCompact, formatPct } from './format';
 import { TABS, startRouter, type TabId } from './router';
-import { renderOverview, renderPeople, renderAccounts, renderContributions, renderProperty, renderSpending } from './scenarioTabs';
+import { renderOverview, renderPeople, renderAccounts, renderContributions, renderProperty, renderSpending, refreshTakeHome } from './scenarioTabs';
 import { renderConfigEditor, refreshModifiedDots } from './configEditor';
 import { renderResults, progressBar } from './results';
 import { successBand } from './successBand';
@@ -22,6 +22,10 @@ export function startApp(root: HTMLElement): Store {
   const notices = h('div', { class: 'notices' });
   const nav = h('nav', { class: 'tabs', 'aria-label': 'Sections' },
     ...TABS.map((t) => h('a', { href: `#/${t.id}`, class: 'tab', 'data-tab': t.id }, t.label)));
+  // On a phone the tab strip cannot show every tab, so a menu replaces it (CSS picks one).
+  const navSelect = h('select', { class: 'tab-select', 'aria-label': 'Go to section', onchange: (e: Event) => { location.hash = `#/${(e.target as HTMLSelectElement).value}`; } },
+    ...TABS.map((t) => h('option', { value: t.id }, t.label)));
+  const navMenu = h('div', { class: 'tab-menu' }, h('span', { class: 'muted small', 'aria-hidden': 'true' }, 'Go to'), navSelect);
 
   const fileInput = h('input', { type: 'file', accept: 'application/json,.json', class: 'sr-only', id: 'import-file', 'aria-label': 'Import a saved plan (JSON)' });
   fileInput.addEventListener('change', async () => {
@@ -48,7 +52,7 @@ export function startApp(root: HTMLElement): Store {
 
   root.replaceChildren(
     h('a', { href: '#panel', class: 'skip-link', onclick: (e: Event) => { e.preventDefault(); panel.focus(); } }, 'Skip to content'),
-    header, notices, nav, layout,
+    header, notices, nav, navMenu, layout,
     h('footer', { class: 'app-footer' },
       h('p', { class: 'disclaimer' }, h('strong', {}, 'This is a modelling tool, not financial advice.'), ' Results depend entirely on the assumptions you enter.'),
       h('p', { class: 'muted small' }, 'Your data stays in this browser (localStorage) and is never uploaded.')),
@@ -81,7 +85,8 @@ export function startApp(root: HTMLElement): Store {
   };
 
   function renderSummary(s: AppState): void {
-    const r = s.results;
+    const r = store.planResults();
+    summary.classList.toggle('is-updating', r !== undefined && store.updating());
     const band = r ? successBand(r.successRate) : null;
     const MIN_PTS = 0.0005;
     const MIN_GBP = 50;
@@ -97,7 +102,7 @@ export function startApp(root: HTMLElement): Store {
           h('span', { class: 'sum-label' }, `Chance the money lasts to ${horizon}`),
           h('span', { class: 'sum-big' }, formatPct(r.successRate), deltaTag(s.results === r ? delta.success : undefined, (v) => `${(v * 100).toFixed(1)} pts`, MIN_PTS)),
           h('span', { class: 'band-label' }, band.label))
-        : h('p', { class: 'muted sum-empty' }, s.status === 'invalid' ? 'Fix the problems below to see results.' : 'Results will appear here once the simulation has run.'),
+        : h('p', { class: 'muted sum-empty' }, s.status === 'invalid' ? 'Fix the problems below to see results.' : 'Working out your results…'),
       r ? h('dl', { class: 'sum-stats' },
         h('div', {}, h('dt', { title: 'The most you could spend a year on living costs and still hit your target success rate. Mortgage payments and property running costs are paid on top.' }, `Max spend at ${Math.round(s.scenario.sim.targetSuccessRate * 100)}% success${costsOnTop(s.scenario) ? ' (excl. home costs)' : ''}`),
           h('dd', {}, s.maxSpend ? [`${formatMoney(s.maxSpend.annualSpendReal)}/yr`, deltaTag(delta.maxSpend, formatMoney, MIN_GBP)] : h('span', { class: 'muted' }, s.maxSpendProgress ? `working… ${s.maxSpendProgress.completed}/${s.maxSpendProgress.total}` : '—'))),
@@ -165,6 +170,7 @@ export function startApp(root: HTMLElement): Store {
     if (s.notices !== last.notices) renderNotices(s);
     showErrors(panel, allIssues(s));
     if (tab === 'rules') refreshModifiedDots(panel, store);
+    if (tab === 'people') refreshTakeHome(panel, store);
     const resultsChanged = s.results !== last.results || s.maxSpend !== last.maxSpend || s.retireAge !== last.retireAge || s.status !== last.status;
     if (resultsChanged && tab === 'results') rerender();
     if (resultsChanged && tab === 'overview') refreshLive();
@@ -178,6 +184,7 @@ export function startApp(root: HTMLElement): Store {
       if (a.dataset.tab === t) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
     nav.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    navSelect.value = t;
     // Overview and Results show the full verdict themselves, so the summary would only repeat it.
     layout.classList.toggle('no-summary', t === 'results' || t === 'overview');
     document.title = `${TABS.find((x) => x.id === t)?.label ?? ''} · UK Retirement Planner`;

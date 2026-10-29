@@ -98,6 +98,11 @@ export interface WithdrawalContext {
   cfg: TaxYearConfig;
   people: WithdrawalPerson[];
   pensionAccessAge: number[];      // per account; ignored for non-DC accounts
+  /**
+   * Draw accessible pensions first, up to this much taxable income per person (before the
+   * withdrawal order): the personal allowance, or the top of the basic-rate band. Omitted = order only.
+   */
+  pensionFirst?: 'allowance' | 'basicRate';
   /** Monthly steps: take pension/GIA money gross, record taxable amounts and gains, tax at year end. */
   deferTax?: boolean;
 }
@@ -234,7 +239,39 @@ export function executeWithdrawals(ctx: WithdrawalContext, need: number, input: 
     return amount - remaining;
   };
 
-  let remaining = need - drawInOrder(need);
+  /**
+   * Pension first, up to each person's chosen taxable-income level: the pension's tax-free 25% plus
+   * the personal allowance (or basic-rate band) then cover spending at no (or 20%) tax, instead of
+   * leaving the allowance unused while other accounts are spent. Never draws more than the need.
+   */
+  const drawPensionFirst = (amount: number): number => {
+    let left = amount;
+    if (!ctx.pensionFirst) return 0;
+    for (let p = 0; p < ctx.people.length && left > SHORTFALL_TOLERANCE_GBP; p++) {
+      const person = ctx.people[p];
+      const ceiling = cfg.personalAllowance + (ctx.pensionFirst === 'basicRate' ? (cfg.incomeTaxBands[0]?.upTo ?? 0) + person.basicBandExtension : 0);
+      for (let ai = 0; ai < ctx.accounts.length && left > SHORTFALL_TOLERANCE_GBP; ai++) {
+        const acc = ctx.accounts[ai];
+        if (acc.type !== 'dcPension' || acc.ownerIndex !== p || state.balances[ai] <= 0) continue;
+        if (!isAccessible(acc, person.age, ctx.pensionAccessAge[ai], cfg)) continue;
+        const inc = incomeOf(p);
+        const room = ceiling - (inc.nonSavings + (inc.property ?? 0) + inc.savings + inc.dividends);
+        if (room <= GROSSUP_TOLERANCE_GBP) break;
+        // Gross that keeps the taxable part within the room: a quarter is tax-free while the LSA lasts.
+        const lsaLeft = Math.max(0, cfg.pension.lumpSumAllowance - state.lsaUsed[p]);
+        const tff = cfg.pension.taxFreeFraction;
+        const grossCap = Math.min(state.balances[ai], lsaLeft >= (room / (1 - tff)) * tff ? room / (1 - tff) : room + lsaLeft);
+        // Its net value: no tax within the allowance; basic-rate tax on the rest.
+        const { taxable } = splitPensionWithdrawal(grossCap, lsaLeft, cfg);
+        const netCap = defer ? grossCap : grossCap - (taxOf({ ...inc, nonSavings: inc.nonSavings + taxable }, p).total - taxOf(inc, p).total);
+        left -= drawOne(ai, Math.min(left, netCap));
+      }
+    }
+    return amount - left;
+  };
+
+  const afterFirst = need - drawPensionFirst(need);
+  let remaining = afterFirst - drawInOrder(afterFirst);
 
   // CGT on a GIA sale was priced against the owner's income at the time of the sale. Pension
   // draws later in the order raise that income (and can push gains into the higher rate), so

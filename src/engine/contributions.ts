@@ -91,6 +91,7 @@ export function planContributions(
   cfg: TaxYearConfig,
   lisaOpen?: readonly boolean[],       // per account; omitted = every LISA is already open
   premiumBondsRoom?: readonly number[], // per person: holding limit less current holdings; omitted = no limit
+  yearFraction = 1,                     // part of the year covered (first year); scales regular fixed payments
 ): ContributionPlan {
   const n = people.length;
   const credits = new Array<number>(accounts.length).fill(0);
@@ -128,7 +129,8 @@ export function planContributions(
     const ai = idxById.get(c.accountId);
     const py = personYears[c.personIndex];
     if (ai === undefined || !py) continue;
-    const amount = contributionAmount(c, people[c.personIndex], py.age, py.grossSalary, inflationIndex);
+    // Salary percentages follow the (already part-year) salary; fixed monthly payments are for the months covered; lump sums are whole.
+    const amount = contributionAmount(c, people[c.personIndex], py.age, py.grossSalary, inflationIndex) * (c.type === 'fixedMonthly' ? yearFraction : 1);
     if (amount <= 0) continue;
     const acc = accounts[ai];
     const req: Req = { acc: ai, amount, employer: c.type === 'employerPctOfSalary', external: c.type === 'lumpSum' && c.source === 'external', atYearEnd: c.type === 'lumpSum' };

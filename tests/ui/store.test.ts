@@ -247,3 +247,22 @@ describe('earliest stop-work age', () => {
     expect(s.getState().retireAge?.age).toBe(64);
   });
 });
+
+describe('results from a replaced plan', () => {
+  it('are not offered as the current plan’s results until its own run finishes', () => {
+    const runner = new FakeRunner();
+    const s = new Store({ initialScenario: small(), autoRun: false, runner });
+    s.runNow();
+    expect(s.planResults()).toBeDefined();
+    // A held-back runner: the new plan's run has not finished yet.
+    let finish: (() => void) | undefined;
+    runner.run = (scenario, config, h) => { finish = () => h.onResult?.(simulate(scenario, config, { runsOverride: 50 })); };
+    s.replaceScenario(small());
+    s.runNow();
+    expect(s.getState().results).toBeDefined();   // the old results still exist...
+    expect(s.planResults()).toBeUndefined();      // ...but are not shown for the new plan
+    expect(s.updating()).toBe(true);
+    finish?.();
+    expect(s.planResults()).toBeDefined();
+  });
+});

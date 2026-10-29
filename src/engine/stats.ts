@@ -56,7 +56,7 @@ export interface MaxSpendOutcome {
 /**
  * Largest multiplier on every spending phase that keeps success >= target.
  * Always uses fixedReal spending; bisection on [0.1, 5.0], 14 iterations, the same seed
- * each time (common random numbers), runs = min(sim.runs, 1000).
+ * each time (common random numbers), runs = the plan's own.
  * `deps.simulate` is injected so this module does not depend on simulate.ts.
  */
 export function findMaxSustainableSpend(scenario: Scenario, config: ConfigBundle, target: number, deps: { simulate: SimulateFn }): MaxSpendOutcome {

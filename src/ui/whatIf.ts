@@ -6,6 +6,7 @@ import { h, uid } from './dom';
 import { formatMoney, formatPct } from './format';
 import { lastsLabel, moneyLastsUntil } from './longevity';
 import { successBand } from './successBand';
+import { drawPreview } from './charts';
 import { costsOnTop } from './verdict';
 
 /** Debounce for slider moves before a quick check is sent to the worker. */
@@ -34,7 +35,7 @@ export function whatIfScenario(s: Scenario, retireAt: number | undefined, spendP
 
 /**
  * "What if?" card: move the stop-work age and spending level and see the chance of
- * success and how long the money lasts, from a quick 1,000-run check on a separate
+ * success and how long the money lasts, from a quick 2,000-run check on a separate
  * worker. "Use these in my plan" writes the values back into the scenario.
  */
 export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
@@ -56,8 +57,29 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
   const out = h('div', { class: 'whatif-out', 'aria-live': 'polite' });
   const changed = () => (retireAt !== undefined && (ui.retireAt ?? planned) !== planned) || ui.spendPct !== FULL_PCT;
 
+  // Live preview: portfolio by age for the what-if against the plan, updated as the sliders move.
+  const startPortfolio = s.accounts.reduce((sum, a) => sum + a.balance, 0);
+  const fromToday = (xs: number[]) => [startPortfolio, ...xs];
+  const previewAges = [ageNow, ...base.ages.map((a) => a + 1)];
+  const previewCanvas = h('canvas', { role: 'img', 'aria-label': 'Preview: portfolio by age for the what-if and your plan, typical and bad case, in today’s money' });
+  const preview = h('figure', { class: 'whatif-preview' },
+    h('div', { class: 'chart-box small' }, previewCanvas),
+    h('figcaption', { class: 'muted small' }, 'Savings and investments by age, today’s money: the typical future and a bad one (1 in 10). Grey is your plan; blue is the what-if, from a quick check.'));
+  const drawPreviewNow = () => {
+    const r = changed() ? ui.result : base;
+    const p = r?.portfolioReal;
+    void drawPreview(previewCanvas, {
+      ages: previewAges,
+      planMedian: fromToday(base.portfolioReal.p50), planLow: fromToday(base.portfolioReal.p10),
+      ...(p ? { median: fromToday(p.p50), low: fromToday(p.p10) } : {}),
+    });
+  };
+
   const renderOut = () => {
     const r = changed() ? ui.result : base;
+    apply.disabled = !changed();
+    reset.disabled = !changed();
+    if (r) requestAnimationFrame(drawPreviewNow);
     if (!r) { out.replaceChildren(h('p', { class: 'muted' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), ' Checking…')); return; }
     const band = successBand(r.successRate);
     const delta = changed() ? r.successRate - base.successRate : 0;
@@ -67,7 +89,7 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
       h('div', { class: `whatif-figure success ${band.cls}` },
         h('span', { class: 'big' }, formatPct(r.successRate)),
         h('span', {}, 'chance the money lasts'),
-        Math.abs(delta) >= 0.0005 ? h('span', { class: `delta ${delta > 0 ? 'up' : 'down'}` }, `${delta > 0 ? '▲' : '▼'} ${(Math.abs(delta) * 100).toFixed(1)} pts vs your plan`) : null),
+        Math.abs(delta) >= 0.0005 ? h('span', { class: `delta ${delta > 0 ? 'up' : 'down'}` }, `${delta > 0 ? '▲' : '▼'} ${(Math.abs(delta) * 100).toFixed(1)} percentage points ${delta > 0 ? 'higher' : 'lower'} than your plan`) : null),
       h('p', {}, `Money lasts to age ${lastsLabel(sure)} in ${Math.round(target * 100)}% of futures, and to ${lastsLabel(typical)} in a typical one.`),
       changed() ? h('p', { class: 'muted small' }, `Quick check: ${r.runs.toLocaleString('en-GB')} simulated futures, so it can differ slightly from the full results.`) : h('p', { class: 'muted small' }, 'This is your current plan. Move a slider to try something else.'));
   };
@@ -98,7 +120,7 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
       h('p', {}, `${when}, you could spend up to `, h('strong', {}, `${formatMoney(v.annualSpendReal)} a year`),
         ` for a ${pct} chance${extra ? ` (plus your ${extra})` : ''}. `, ui.spendPct === tryPct ? null : tryIt),
       ...v.warnings.map((w) => h('p', { class: 'muted small' }, w)),
-      ...(age !== undefined && age !== planned ? [h('p', { class: 'muted small' }, 'Quick estimate, to within about 1% of your planned spending.')] : []));
+      ...(age !== undefined && age !== planned ? [h('p', { class: 'muted small' }, 'Quick estimate (2,000 simulated futures), to within about half a percent of your planned spending.')] : []));
   };
   const scheduleSpend = () => {
     const age = retireNow();
@@ -169,7 +191,7 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
     h('p', { class: 'muted' }, working
       ? `Try stopping work earlier or later, or spending more or less, and see how long the money lasts. Move the stop-work age to see the most you could spend if you stopped then. ${s.people.length > 1 ? 'A partner who is still working moves their stop-work age by the same number of years. ' : ''}${extra ? `The spending slider scales your spending plan only; your ${extra} stay as they are. ` : ''}Nothing changes until you choose “Use these in my plan”.`
       : `Try spending more or less and see how long the money lasts. ${extra ? `The slider scales your spending plan only; your ${extra} stay as they are. ` : ''}Nothing changes until you choose “Use these in my plan”.`),
-    h('div', { class: 'whatif-grid' }, h('div', { class: 'whatif-controls' }, retireRow, spendRow, h('p', { class: 'row-btns' }, apply, reset)), h('div', {}, out, spendLine)));
+    h('div', { class: 'whatif-grid' }, h('div', { class: 'whatif-controls' }, retireRow, spendRow, h('p', { class: 'row-btns' }, apply, reset), preview), h('div', { class: 'whatif-results' }, out, spendLine)));
   schedule();
   scheduleSpend();
   return panel;

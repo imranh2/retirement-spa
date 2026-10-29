@@ -50,3 +50,15 @@ describe('Premium Bonds', () => {
     expect(validateScenario(withBonds(50_000, 0), TEST_CONFIG)).toEqual([]);
   });
 });
+
+describe('Premium Bonds limit with a year-end payment', () => {
+  it('a one-off payment at the end of the year cannot take holdings over the limit', () => {
+    const s = withBonds(49_000, 0);
+    s.contributions = [{ id: 'l', accountId: 'pb', personIndex: 0, type: 'lumpSum', amount: 5_000, startAge: 60, endAge: 120, escalatesWithInflation: false, source: 'external' }];
+    s.withdrawalOrder = ['cash', 'premiumBonds'];
+    s.spending = [{ fromAge: 0, annualSpend: 0 }, { fromAge: 61, annualSpend: 100_000 }];
+    // Year 2 spends everything: Premium Bonds hold at most £50k, the rest was paid into cash.
+    const r = rows(s);
+    expect(r[1].drawPremiumBonds).toBeLessThanOrEqual(50_000 + 1e-6);
+  });
+});

@@ -5,6 +5,7 @@ import { canChooseStopWork, currentAges } from '../model/retirement';
 import { h } from './dom';
 import { formatMoney, formatPct } from './format';
 import { successBand } from './successBand';
+import { surplusDescription } from './scenarioTabs';
 
 /**
  * What the plan pays on top of the spending plan, e.g. "mortgage payments and home running
@@ -25,6 +26,30 @@ function costsOnTopList(s: Scenario): string[] {
 export function whatMustBePaid(s: Scenario): string {
   const items = ['spending', ...costsOnTopList(s), 'tax'];
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** Below this a year, drawing on savings while working is too small to mention. */
+const SHORTFALL_NOTE_GBP = 500;
+
+/**
+ * While anyone still earns, how much a year (today's money, average) the central case draws from
+ * savings to cover spending, mortgage, costs, tax and saving: i.e. outgoings above take-home pay.
+ */
+export function workingShortfall(r: SimulationResult): { perYear: number; years: number } | null {
+  const rows = r.centralCase.filter((row) => row.salary > 0);
+  if (rows.length === 0) return null;
+  const drawn = rows.map((row) => row.drawCash + row.drawGia + row.drawIsa + row.drawLisa + row.drawPension + (row.drawPremiumBonds ?? 0));
+  const short = drawn.filter((d) => d > 0);
+  if (short.length === 0) return null;
+  const perYear = short.reduce((a, b) => a + b, 0) / short.length;
+  return perYear >= SHORTFALL_NOTE_GBP ? { perYear, years: short.length } : null;
+}
+
+/** Plain-English note about overspending while working, or null. */
+export function shortfallText(r: SimulationResult): string | null {
+  const w = workingShortfall(r);
+  if (!w) return null;
+  return `While working, you spend about ${formatMoney(Math.round(w.perYear / 100) * 100)} a year more than you take home (living costs, mortgage, home costs and saving together), so savings cover the gap${w.years > 1 ? ` in ${w.years} years` : ''}. See Results → Year by year.`;
 }
 
 /** Below this relative gap between planned and max spend, say the plan is "about right". */
@@ -87,6 +112,19 @@ export function keyFacts(r: SimulationResult, s: Scenario, retireAge: RetireAgeV
       : null);
 }
 
+/**
+ * With a flexible strategy the chance of success is high because spending falls in bad markets:
+ * say how far it falls in a bad future (1 in 10), so the cost of that flexibility is visible.
+ */
+function flexibleSpendingText(r: SimulationResult): string {
+  const lead = 'With your withdrawal strategy, spending falls when investments do, so a future only counts as running out if it cannot cover fixed costs.';
+  const low = r.retirementSpendLow;
+  if (low === undefined) return lead;
+  return low <= 0
+    ? `${lead} In 1 future in 10 the money runs out.`
+    : `${lead} In 1 future in 10, spending in retirement drops to ${formatMoney(Math.round(low / 100) * 100)} a year or less at some point (today’s money).`;
+}
+
 /** Big success figure, band label and the plain-English verdict. */
 export function verdictBlock(r: SimulationResult, s: Scenario, maxSpend: MaxSpendValue | undefined, pending: string | null): HTMLElement {
   const band = successBand(r.successRate);
@@ -102,8 +140,7 @@ export function verdictBlock(r: SimulationResult, s: Scenario, maxSpend: MaxSpen
         ? h('p', { class: 'muted small' }, `That figure is your spending now. It assumes ${s.spending.length > 1 ? 'every phase of your spending plan scales by the same amount and is ' : ''}spent as a fixed amount rising with inflation, whatever withdrawal strategy you chose.`)
         : null,
       ...(maxSpend?.warnings ?? []).map((w) => h('p', { class: 'warning small' }, w)),
-      s.strategy.kind !== 'fixedReal'
-        ? h('p', { class: 'small' }, 'With your withdrawal strategy, spending falls when investments do, so a future only counts as running out if it cannot cover fixed costs. Check “Where the money comes from” for how low spending gets.')
-        : null,
-      h('p', { class: 'muted small' }, `A future counts as a success if ${whatMustBePaid(s)} are paid in full every year until age ${s.sim.horizonAge}. Based on ${r.runs.toLocaleString('en-GB')} simulated futures. All amounts are in today’s money.`)));
+      shortfallText(r) ? h('p', { class: 'warning small' }, shortfallText(r)) : null,
+      s.strategy.kind !== 'fixedReal' ? h('p', { class: 'small' }, flexibleSpendingText(r)) : null,
+      h('p', { class: 'muted small' }, `A future counts as a success if ${whatMustBePaid(s)} are paid in full every year until age ${s.sim.horizonAge}. Spare income while working is ${surplusDescription(s)}. Based on ${r.runs.toLocaleString('en-GB')} simulated futures. All amounts are in today’s money.`)));
 }

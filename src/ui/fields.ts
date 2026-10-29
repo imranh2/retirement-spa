@@ -77,9 +77,10 @@ export function numberField(o: NumberFieldOpts): HTMLElement {
       placeholder: o.placeholder,
     });
   const el = wrap(id, o, input, UNIT_LABEL[o.unit]);
-  const localErr = el.querySelector<HTMLElement>('.error');
+  // Its own slot: the shared error slot is rewritten by plan validation, which would hide this message.
+  const localErr = h('p', { class: 'error local-error', 'aria-live': 'polite' });
+  el.querySelector('.error')?.before(localErr);
   const setLocalError = (msg: string) => {
-    if (!localErr) return;
     localErr.textContent = msg;
     if (msg) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid');
   };
@@ -88,12 +89,12 @@ export function numberField(o: NumberFieldOpts): HTMLElement {
     const raw = input.value.trim();
     if (raw === '') {
       if (o.nullable) { setLocalError(''); o.onChange(null); }
-      else setLocalError('Enter a number');
+      else setLocalError('Enter a number, or 0');
       return;
     }
     const n = parse(raw);
-    if (!Number.isFinite(n)) { setLocalError('Enter a number'); return; }
-    if (localErr?.textContent === 'Enter a number') setLocalError('');
+    if (!Number.isFinite(n)) { setLocalError(isMoney ? 'Enter an amount in pounds, e.g. 60000' : 'Enter a number'); return; }
+    setLocalError('');
     o.onChange(isPct ? n / 100 : n);
   });
   if (isMoney) {

@@ -9,7 +9,8 @@ import { defaultStatePensionStartAge, minimumPensionAccessAge, statePensionAge }
 import { ACCOUNT_TYPES, MIN_HISTORY_ROWS, SURPLUS_ACCOUNT_TYPES } from '../model/validateScenario';
 import { EXAMPLE_SCENARIOS } from './exampleScenarios';
 import { quickStartSection } from './quickStart';
-import { keyFacts, verdictBlock } from './verdict';
+import { progressSlot } from './results';
+import { keyFacts, shortfallText, verdictBlock } from './verdict';
 
 export interface TabCtx { store: Store; rerender: () => void }
 
@@ -51,7 +52,7 @@ function taxYearAt(s: Scenario, personIndex: number, age: number): string | unde
  * Show which tax year an age field means, under the field, kept up to date as it is typed.
  * `kind`: 'from' (the first year it applies), 'until' (an exclusive end: the last year is the one before).
  */
-function withTaxYear(c: TabCtx, el: HTMLElement, personIndex: number, kind: 'from' | 'until', blank: string): HTMLElement {
+function withTaxYear(c: TabCtx, el: HTMLElement, personIndex: number, kind: 'from' | 'until', blank: string, past?: (ageNow: number) => string): HTMLElement {
   const input = el.querySelector('input');
   if (!input) return el;
   const note = h('p', { class: 'muted small tax-year-note', 'aria-live': 'polite' });
@@ -61,12 +62,43 @@ function withTaxYear(c: TabCtx, el: HTMLElement, personIndex: number, kind: 'fro
     if (raw === '') { note.textContent = blank; return; }
     const age = Number(raw);
     const year = taxYearAt(s, personIndex, kind === 'until' ? age - 1 : age);
-    note.textContent = year === undefined ? (kind === 'until' ? 'Already ended: none in this plan' : 'Already started') : kind === 'until' ? `Last tax year: ${year}` : `From tax year ${year}`;
+    const ageNow = startAge(s, personIndex);
+    const isPast = year === undefined && ageNow !== undefined && past !== undefined && age < ageNow;
+    note.classList.toggle('warning', isPast);
+    note.textContent = isPast && ageNow !== undefined && past ? past(ageNow)
+      : year === undefined ? (kind === 'until' ? 'Already ended: none in this plan' : 'Already started') : kind === 'until' ? `Last tax year: ${year}` : `From tax year ${year}`;
   };
   input.addEventListener('input', update);
   update();
   el.append(note);
   return el;
+}
+
+/** Estimated take-home pay for a one-person plan, from the latest results' first year (or null). */
+function takeHomeText(c: TabCtx): string | null {
+  const s = sc(c);
+  const row = c.store.planResults()?.centralCase[0];
+  if (s.people.length !== 1 || !row || row.salary <= 0) return null;
+  const perYear = (row.salary - row.taxPaid - row.niPaid) * MONTHS_IN_YEAR / (row.months ?? MONTHS_IN_YEAR);
+  return `Take-home about ${formatMoney(Math.round(perYear / 100) * 100)} a year (${formatMoney(Math.round(perYear / MONTHS_IN_YEAR / 10) * 10)} a month) after income tax and NI, before pension and other saving. From the latest results.`;
+}
+const MONTHS_IN_YEAR = 12;
+
+/** The salary field with the estimated take-home pay under it (kept current by refreshTakeHome). */
+function withTakeHome(c: TabCtx, el: HTMLElement, personIndex: number): HTMLElement {
+  if (personIndex !== 0) return el;
+  const text = takeHomeText(c);
+  el.append(h('p', { class: 'muted small take-home-note', 'aria-live': 'polite', hidden: text === null }, text ?? ''));
+  return el;
+}
+
+/** Update the take-home notes in `root` after a run (People tab). */
+export function refreshTakeHome(root: HTMLElement, store: Store): void {
+  root.querySelectorAll<HTMLElement>('.take-home-note').forEach((el) => {
+    const text = takeHomeText({ store, rerender: () => {} });
+    el.hidden = text === null;
+    el.textContent = text ?? '';
+  });
 }
 
 /**
@@ -155,6 +187,7 @@ export function describeScenario(s: Scenario): string[] {
       : st.kind === 'guardrails' ? `in retirement, guardrails start at ${formatPct(st.initialPct)} of the portfolio and adjust by ${formatPct(st.adjust)}`
         : `in retirement, spending is ${formatPct(st.pct)} of the portfolio, kept between ${formatMoney(st.floor)} and ${formatMoney(st.ceiling)}`;
   out.push(`Strategy: ${strat}. Accounts are drawn in this order: ${s.withdrawalOrder.map((t) => SHORT_LABEL[t]).join(' → ')}.`);
+  if (s.pensionDrawdown === 'allowance' || s.pensionDrawdown === 'basicRate') out.push(`Pensions are drawn first each year up to ${s.pensionDrawdown === 'allowance' ? 'the tax-free personal allowance' : 'the top of the basic-rate band'}, once they can be used.`);
   out.push(`Spare income (left after spending, tax and saving) is ${surplusDescription(s)}.`);
   out.push(`The model runs ${s.sim.runs.toLocaleString('en-GB')} simulations until ${names[0] === 'You' ? 'you are' : `${names[0]} is`} ${s.sim.horizonAge}.`);
   return out;
@@ -209,6 +242,7 @@ export function issueLocation(path: string, s: Scenario): { tab: string; tabLabe
     case 'spending': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: i !== undefined ? `Spending phase ${i + 1}` : 'Spending plan' };
     case 'strategy': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Withdrawal strategy' };
     case 'withdrawalOrder': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Withdrawal order' };
+    case 'pensionDrawdown': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Pension withdrawals' };
     case 'surplus': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Spare income' };
     case 'sim': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Simulation settings' };
     default: return { tab: 'rules', tabLabel: 'Rules & Assumptions', item: path };
@@ -218,29 +252,40 @@ export function issueLocation(path: string, s: Scenario): { tab: string; tabLabe
 export function renderOverview(c: TabCtx): HTMLElement {
   const st = c.store.getState();
   const s = st.scenario;
-  const r = st.results;
+  // Results from a replaced plan are never shown; results being updated are dimmed and labelled.
+  const r = c.store.planResults();
+  const updating = c.store.updating();
   const pendingSpend = st.maxSpendProgress ? 'Working out how much you could spend…' : null;
   const headline = r
-    ? h('div', {}, verdictBlock(r, s, st.maxSpend, pendingSpend), keyFacts(r, s, st.retireAge, st.status === 'done'))
-    : h('p', { class: 'muted' }, st.status === 'invalid' ? 'Fix the problems listed below to see results.' : 'Results will appear here once the simulation has run.');
+    ? h('div', { class: updating ? 'updating' : undefined },
+      updating ? h('p', { class: 'updating-note' }, 'Updating… these figures are from before your last change.') : null,
+      verdictBlock(r, s, st.maxSpend, pendingSpend), keyFacts(r, s, st.retireAge, st.status === 'done'))
+    : h('div', {}, progressSlot(c.store), h('p', { class: 'muted' }, st.status === 'invalid' ? 'Fix the problems listed below to see results.' : 'Working out your results…'));
   const issues = st.scenarioErrors.slice(0, 8).map((e) => {
     const loc = issueLocation(e.path, s);
     return h('li', {}, h('strong', {}, `${loc.item}: `), e.message, ' ', h('a', { href: `#/${loc.tab}` }, `Fix in ${loc.tabLabel} →`));
   });
   const moreIssues = st.scenarioErrors.length - issues.length;
-  const warnings = (r?.warnings ?? []).map((w) => h('li', {}, w));
+  const shortfall = r ? shortfallText(r) : null;
+  const warnings = [...(shortfall ? [shortfall] : []), ...(r?.warnings ?? [])].map((w) => h('li', {}, w));
   const replaceCard = (title: string, description: string, load: () => void) => h('div', { class: 'card' },
     h('h4', {}, title), h('p', { class: 'muted' }, description),
-    confirmButton('Load', 'Replace my scenario', () => { load(); c.rerender(); }));
+    (() => {
+      const btn = confirmButton('Load', 'Replace my scenario', () => { load(); c.rerender(); });
+      btn.querySelector('button')?.setAttribute('aria-label', `Load example: ${title}`);
+      return btn;
+    })());
   return h('div', {},
     // Results arriving refresh only this part (data-live), so typing in the quick start is not lost.
     h('div', { 'data-live': 'overview' },
       h('section', { class: 'panel-section' }, h('h2', {}, 'Your plan at a glance'), headline,
         h('p', { class: 'row-btns' }, h('a', { href: '#/results', class: 'btn primary' }, 'See full results →'), h('a', { href: '#/people', class: 'btn' }, 'Edit your details'))),
-      issues.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Problems to fix'), h('ul', { class: 'error-list' }, ...issues), moreIssues > 0 ? h('p', { class: 'muted' }, `…and ${moreIssues} more, highlighted on their tabs.`) : null) : null,
-      warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Things to know'), h('ul', { class: 'warning-list' }, ...warnings)) : null),
+      issues.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Problems to fix'), h('ul', { class: 'error-list' }, ...issues), moreIssues > 0 ? h('p', { class: 'muted' }, `…and ${moreIssues} more, highlighted on their tabs.`) : null) : null),
     // Open on a first visit (the example plan is showing) or when linked to directly.
     quickStartSection(c.store, st.notices.some((n) => n.id === 'welcome') || location.hash.includes('quickstart'), c.rerender),
+    // Below the quick start, so notes arriving with results do not push the form down.
+    h('div', { 'data-live': 'overview-notes' },
+      warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Things to know'), h('ul', { class: 'warning-list' }, ...warnings)) : null),
     h('section', { class: 'panel-section' }, h('h3', {}, 'Your scenario in words'), h('ul', { class: 'scenario-list' }, ...describeScenario(s).map((t) => h('li', {}, t)))),
     h('section', { class: 'panel-section', id: 'examples' }, h('h3', {}, 'Or load an example'),
       h('p', { class: 'muted' }, 'Replaces your current scenario (your rules and assumptions are kept). Export first if you want to keep it.'),
@@ -259,9 +304,9 @@ function personFields(c: TabCtx, p: Person, i: number): Node[] {
       document.querySelectorAll(`select[${PEOPLE_SELECT}] option[value="${i}"]`).forEach((o) => { o.textContent = v || `Person ${i + 1}`; });
     } }),
     textField({ label: 'Date of birth', type: 'date', value: p.dateOfBirth, errorPath: `${pre}.dateOfBirth`, onChange: (v) => setS(c, `${pre}.dateOfBirth`, v) }),
-    numberField({ label: 'Salary (gross, per year)', unit: 'gbp', min: 0, step: 100, value: p.salary, errorPath: `${pre}.salary`, help: 'Gross annual employment income in today’s money. Set 0 if not working.', onChange: (v) => setS(c, `${pre}.salary`, v ?? 0) }),
+    withTakeHome(c, numberField({ label: 'Salary (gross, per year)', unit: 'gbp', min: 0, step: 100, value: p.salary, errorPath: `${pre}.salary`, help: 'Gross annual employment income in today’s money. Set 0 if not working.', onChange: (v) => setS(c, `${pre}.salary`, v ?? 0) }), i),
     numberField({ label: 'Salary growth above inflation', unit: 'pct', step: 0.001, value: p.salaryGrowthRealPct, errorPath: `${pre}.salaryGrowthRealPct`, help: 'Annual pay rise above inflation, e.g. 1%.', onChange: (v) => setS(c, `${pre}.salaryGrowthRealPct`, v ?? 0) }),
-    withTaxYear(c, numberField({ label: 'Stops work at', unit: 'age', min: 0, max: 120, step: 1, value: p.retirementAge, errorPath: `${pre}.retirementAge`, help: 'Salary stops at this age, and so do contributions unless you set them to carry on (Contributions tab). For person 1 this is also when the retirement withdrawal strategy begins. Each year of the plan is a whole tax year.', onChange: (v) => setS(c, `${pre}.retirementAge`, v ?? 0) }), i, 'until', ''),
+    withTaxYear(c, numberField({ label: 'Stops work at', unit: 'age', min: 0, max: 120, step: 1, value: p.retirementAge, errorPath: `${pre}.retirementAge`, help: 'Salary stops at this age, and so do contributions unless you set them to carry on (Contributions tab). For person 1 this is also when the retirement withdrawal strategy begins. Each year of the plan is a whole tax year.', onChange: (v) => setS(c, `${pre}.retirementAge`, v ?? 0) }), i, 'until', '', (now) => `That is before ${p.name === 'You' ? 'your' : `${p.name || `person ${i + 1}`}’s`} current age (${now}), so ${p.name === 'You' ? 'you are' : 'they are'} treated as not working: no salary in this plan. Enter a later age if still working.`),
     numberField({ label: 'NI qualifying years so far', unit: 'years', min: 0, max: 60, step: 1, value: p.niQualifyingYears, errorPath: `${pre}.niQualifyingYears`, help: 'From your State Pension forecast on gov.uk. Each future year before State Pension age adds one if you earn at least the lower earnings limit, or get NI credits (see below).', onChange: (v) => setS(c, `${pre}.niQualifyingYears`, v ?? 0) }),
     numberField({ label: 'NI credits or voluntary NI until', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: p.niCreditsUntilAge, placeholder: 'none', errorPath: `${pre}.niCreditsUntilAge`,
       help: 'A future year counts towards the State Pension only if your salary reaches the lower earnings limit. Enter an age here if you will get NI credits until then without earning (e.g. Child Benefit for a child under 12, Carer’s Allowance, Universal Credit) or plan to pay voluntary NI. The cost of voluntary NI is not modelled.',
@@ -416,7 +461,7 @@ function accountFields(c: TabCtx, a: Account, i: number): Node[] {
     fields.push(
       numberField({ label: 'Your access age', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: a.pensionAccessAge, placeholder: owner ? `${minimumPensionAccessAge(owner.dateOfBirth, c.store.getState().config.pensionAccess)} (from the rules)` : 'from the rules', errorPath: `${pre}.pensionAccessAge`, help: 'Leave blank to use the minimum pension age from the rules: 55 only if you reach 57 on or before 6 April 2028, otherwise 57. Enter your own age if you have a protected pension age (e.g. 55 under your scheme rules) or plan to wait longer. The pension is never touched before this age.', onChange: (v) => setS(c, `${pre}.pensionAccessAge`, v ?? undefined) }),
       numberField({ label: 'Tax-free cash already taken', unit: 'gbp', nullable: true, min: 0, step: 100, value: a.taxFreeCashTaken, placeholder: '0', errorPath: `${pre}.taxFreeCashTaken`, help: 'Counts against the Lump Sum Allowance.', onChange: (v) => setS(c, `${pre}.taxFreeCashTaken`, v ?? undefined) }),
-      selectField({ label: 'Tax relief method', value: a.pensionReliefMethod ?? 'netPay', options: [{ value: 'netPay', label: 'Net pay (workplace, deducted before tax)' }, { value: 'reliefAtSource', label: 'Relief at source (SIPP / some workplace)' }], errorPath: `${pre}.pensionReliefMethod`, help: 'Net pay: contributions come off taxable pay. Relief at source: you pay 80% and the provider claims basic-rate relief; higher-rate relief extends your basic band.', onChange: (v) => setS(c, `${pre}.pensionReliefMethod`, v) }),
+      selectField({ label: 'Tax relief method', value: a.pensionReliefMethod ?? 'netPay', options: [{ value: 'netPay', label: 'Net pay (workplace)' }, { value: 'reliefAtSource', label: 'Relief at source (SIPP)' }], errorPath: `${pre}.pensionReliefMethod`, help: 'Net pay: contributions come off taxable pay. Relief at source: you pay 80% and the provider claims basic-rate relief; higher-rate relief extends your basic band.', onChange: (v) => setS(c, `${pre}.pensionReliefMethod`, v) }),
     );
   }
   if (a.type === 'lisa') {
@@ -482,7 +527,7 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
   const fields: Node[] = [
     selectField({ label: 'Into account', value: k.accountId, errorPath: `${pre}.accountId`, options: [{ value: '', label: 'Choose…', disabled: true }, ...s.accounts.map((a) => ({ value: a.id, label: `${a.name} (${SHORT_LABEL[a.type]}, ${s.people[a.ownerIndex]?.name ?? '?'})` }))],
       onChange: (v) => { const a = s.accounts.find((x) => x.id === v); setS(c, `${pre}.accountId`, v); if (a && a.type !== 'cash' && a.type !== 'gia') setS(c, `${pre}.personIndex`, a.ownerIndex); c.rerender(); } }),
-    selectField({ label: 'Paid by', value: String(k.personIndex), options: personOptions(s), errorPath: `${pre}.personIndex`, help: 'Whose salary and allowances this uses.', onChange: (v) => setS(c, `${pre}.personIndex`, Number(v)) }),
+    selectField({ label: k.type === 'employerPctOfSalary' ? 'Employee (whose salary)' : 'Paid by', value: String(k.personIndex), options: personOptions(s), errorPath: `${pre}.personIndex`, help: 'Whose salary and allowances this uses.', onChange: (v) => setS(c, `${pre}.personIndex`, Number(v)) }),
     selectField({ label: 'Type', value: k.type, errorPath: `${pre}.type`,
       options: (Object.keys(CONTRIB_LABEL) as Contribution['type'][]).map((t) => ({ value: t, label: CONTRIB_LABEL[t], disabled: t === 'employerPctOfSalary' && acc !== undefined && acc.type !== 'dcPension' })),
       onChange: (v) => { setS(c, `${pre}.type`, v); c.rerender(); } }),
@@ -499,7 +544,7 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
     outside ? null : selectField({ label: 'Stop paying', value: stops, errorPath: `${pre}.stopsWith`,
       help: 'Payments after stopping work come out of your savings and investments, like spending does. A percentage of salary stops anyway, as there is no salary.',
       options: [
-        { value: 'work', label: `When ${payerName} stops work (age ${payer?.retirementAge ?? '—'})` },
+        { value: 'work', label: `When ${payerName === 'You' ? 'you stop' : `${payerName} stops`} work (age ${payer?.retirementAge ?? '—'})` },
         { value: 'age', label: 'At a set age, or on stopping work if sooner' },
         ...(isPct ? [] : [{ value: 'ageEvenAfterWork', label: 'At a set age, even after stopping work' }]),
       ],
@@ -537,7 +582,8 @@ function mortgagePaymentNote(m: Mortgage, id: string): HTMLElement {
   const pay = mortgagePayments(m);
   const over = m.monthlyOverpayment > 0 ? ` plus your ${formatMoney(m.monthlyOverpayment)} overpayment` : '';
   const kind = m.type === 'interestOnly' ? 'Interest-only payment' : 'Monthly payment';
-  const fixed = m.fixedYearsRemaining > 0 && pay.afterFix !== undefined;
+  // Only mention the payment after the fix when it differs (equal rates leave it unchanged).
+  const fixed = m.fixedYearsRemaining > 0 && pay.afterFix !== undefined && Math.abs(pay.afterFix - pay.now) >= 1;
   return h('p', { id, class: 'full mortgage-payment', 'aria-live': 'polite' },
     h('strong', {}, `${kind}: ${formatMoney(pay.now)}`), over,
     fixed ? `, then about ${formatMoney(pay.afterFix ?? 0)} a month at ${formatPct(m.reversionRate)} once the fix ends` : '',
@@ -612,7 +658,7 @@ const STRATEGY_DEFAULTS: Record<WithdrawalStrategy['kind'], WithdrawalStrategy> 
   floorCeiling: { kind: 'floorCeiling', floor: 20000, ceiling: 50000, pct: 0.04 },
 };
 const STRATEGY_LABEL: Record<WithdrawalStrategy['kind'], string> = {
-  fixedReal: 'Fixed real (follow the spending plan)', percentOfPortfolio: 'Percentage of portfolio', guardrails: 'Guardrails (Guyton-Klinger style)', floorCeiling: 'Percentage with floor and ceiling',
+  fixedReal: 'Spend the same each year, rising with inflation', percentOfPortfolio: 'Percentage of portfolio', guardrails: 'Guardrails (Guyton-Klinger style)', floorCeiling: 'Percentage with floor and ceiling',
 };
 
 function strategyFields(c: TabCtx, st: WithdrawalStrategy): Node[] {
@@ -684,6 +730,16 @@ export function renderSpending(c: TabCtx): HTMLElement {
     surplusSection(c),
     h('section', { class: 'panel-section' }, h('h3', {}, 'Withdrawal order'),
       h('p', { class: 'muted' }, 'Accounts are drawn in this order when income does not cover spending. Locked pensions and LISAs are skipped until accessible, so an ISA/GIA/cash “bridge” works automatically.'),
+      h('div', { class: 'grid' }, wide(selectField({
+        label: 'Pension withdrawals', value: s.pensionDrawdown ?? 'inOrder', errorPath: 'pensionDrawdown',
+        help: 'Once a pension can be used, taking some of it every year often saves tax: a quarter of each withdrawal is tax-free and the rest is covered by your personal allowance (£12,570), so about £16,760 a year comes out tax-free. Left in order, the allowance goes unused while other accounts are spent, and the pension is taxed more later. Filling the basic-rate band goes further, at 20% tax now to avoid 40% later. Only money the year needs is taken.',
+        options: [
+          { value: 'allowance', label: 'Use the tax-free allowance first, then the order below' },
+          { value: 'basicRate', label: 'Fill the basic-rate band first, then the order below' },
+          { value: 'inOrder', label: 'Only when the order below reaches pensions' },
+        ],
+        onChange: (v) => setS(c, 'pensionDrawdown', v),
+      }))),
       errorSlot('withdrawalOrder'),
       h('ol', { class: 'order' }, ...order.map((t, i) => h('li', {},
         h('span', {}, ACCOUNT_LABEL[t]),

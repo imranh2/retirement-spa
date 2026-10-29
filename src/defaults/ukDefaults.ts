@@ -93,7 +93,9 @@ export const DEFAULT_CONFIG: ConfigBundle = {
   taxProjection: {
     thresholdsFrozenThroughTaxYear: '2030/31',  // verified gov.uk 2026-10-28
     upratingAfterFreeze: 'inflation',
-    upratedItems: ['personalAllowance', 'incomeTaxBands', 'niThresholds'],
+    // After the freeze every allowance rises with inflation. Frozen forever, ISA, CGT, dividend and
+    // pension allowances would lose about 60% of their real value over a 40-year plan, overstating tax.
+    upratedItems: ['personalAllowance', 'incomeTaxBands', 'niThresholds', 'savingsAndDividendAllowances', 'cgtExempt', 'isaAllowance', 'pensionAllowances'],
   },
   pensionAccess: {
     minAgeNow: 55,                              // verified gov.uk 2026-10-28

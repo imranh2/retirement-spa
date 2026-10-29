@@ -126,3 +126,29 @@ describe('executeWithdrawals', () => {
     expect(Math.abs(r.net.dcPension - 20000)).toBeLessThanOrEqual(1);
   });
 });
+
+describe('pension first, up to the personal allowance', () => {
+  it('draws pension each year within the allowance instead of leaving it unused, and pays less tax overall', async () => {
+    const { simulate } = await import('../../src/engine/simulate');
+    const { cashOnlyScenario, account } = await import('../fixtures/testScenarios');
+    const { zeroWorldConfig } = await import('../fixtures/testConfig');
+    // Income tax on, returns and inflation off: 60, retired, £150k cash, £300k pension, £30k spending.
+    const cfg = zeroWorldConfig();
+    cfg.tax['2026/27'].incomeTaxBands = [{ upTo: 37_700, rate: 0.2 }, { upTo: 125_140, rate: 0.4 }, { upTo: null, rate: 0.45 }];
+    const make = (mode: 'inOrder' | 'allowance') => {
+      const s = cashOnlyScenario({ startAge: 60, pot: 150_000, spend: 30_000, horizonYears: 20 });
+      s.accounts.push(account('pen', 'dcPension', 300_000, { pensionAccessAge: 57 }));
+      s.withdrawalOrder = ['cash', 'dcPension'];
+      s.pensionDrawdown = mode;
+      return simulate(s, cfg, { runsOverride: 1 }).centralCase;
+    };
+    const inOrder = make('inOrder');
+    const first = make('allowance');
+    expect(inOrder[0].drawPension).toBe(0);
+    // 12,570 / 0.75 = £16,760 gross, all tax-free.
+    expect(first[0].drawPension).toBeCloseTo(12_570 / 0.75, 0);
+    expect(first[0].taxPaid).toBeCloseTo(0, 6);
+    const tax = (rows: typeof first) => rows.reduce((s, r) => s + r.taxPaid, 0);
+    expect(tax(first)).toBeLessThan(tax(inOrder) - 10_000);
+  });
+});

@@ -10,7 +10,7 @@
     <style>
       :root {
         --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f0f3f7; --text: #1f2933; --muted: #52606d;
-        --border: #d3d9e0; --accent: #1d4ed8; --accent-text: #ffffff; --focus: #f59e0b;
+        --border: #d3d9e0; --accent: #1d4ed8; --accent-text: #ffffff; --focus: #b45309;
         --danger: #b42318; --danger-bg: #fdecea; --warn: #8a5a00; --warn-bg: #fff4d6; --ok: #166534; --ok-bg: #e7f6ec;
         --info-bg: #e8f0fe; --grid: rgba(0,0,0,0.08); --band-outer: rgba(29,78,216,0.14); --band-inner: rgba(29,78,216,0.30);
         --radius: 8px; --gap: 1rem;
@@ -45,6 +45,8 @@
       .tabs { display: flex; gap: .25rem; border-bottom: 2px solid var(--border); margin-bottom: 1rem; overflow-x: auto; scrollbar-width: thin; }
       .tab { padding: .55rem .85rem; text-decoration: none; color: var(--text); border-radius: var(--radius) var(--radius) 0 0; border: 1px solid transparent; border-bottom: none; white-space: nowrap; flex: none; }
       .tab[data-tab="results"] { margin-left: auto; font-weight: 600; color: var(--accent); }
+      .tab-menu { display: none; align-items: center; gap: .5rem; margin-bottom: 1rem; }
+      .tab-menu select { flex: 1; min-height: 44px; font-weight: 600; }
 
       /* Inputs on the left, a live results summary on the right (stacks on narrow screens). */
       .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--gap); align-items: start; }
@@ -112,7 +114,10 @@
       legend { font-weight: 600; padding: 0 .3rem; }
 
       .field { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
-      .field-head { display: flex; gap: .35rem; align-items: center; flex-wrap: wrap; }
+      .field-head { display: flex; gap: .35rem; align-items: center; flex-wrap: wrap; min-height: 1.75rem; }
+      .local-error:empty { display: none; }
+      /* The tab strip scrolls, which clips an outside focus ring: draw it inside. */
+      .tab:focus-visible { outline-offset: -3px; }
       .field label { font-weight: 500; font-size: .92rem; }
       .unit { color: var(--muted); font-weight: 400; }
       .field.check label { display: flex; gap: .4rem; align-items: center; font-weight: 500; }
@@ -175,7 +180,10 @@
       .chart.placeholder .chart-box { background: var(--surface-2); border-radius: 6px; }
       .chart p { margin: .5rem 0 0; }
       figure { margin: 0 0 var(--gap); }
-      .results.stale .stats, .results.stale .chart { opacity: .75; }
+      /* Results from before the latest change: clearly dimmed until the new run finishes. */
+      .results.stale .stats, .results.stale .chart, .results.stale #summary, .results.stale #year-by-year, .updating { opacity: .45; transition: opacity .2s; }
+      .summary.is-updating .sum-success, .summary.is-updating .sum-stats { opacity: .45; transition: opacity .2s; }
+      .updating-note { font-weight: 600; margin: 0 0 .5rem; }
       .toggle { display: inline-flex; align-items: center; gap: .3rem; }
 
       .app-footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); }
@@ -205,7 +213,11 @@
       .key-facts dd { margin: .15rem 0 0; display: flex; flex-direction: column; gap: .15rem; }
       .fact-value { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
       .whatif-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 1.25rem; align-items: start; }
-      @media (max-width: 760px) { .whatif-grid { grid-template-columns: minmax(0, 1fr); } }
+      /* On a phone the result comes first, so it stays in view while the sliders move. */
+      @media (max-width: 760px) { .whatif-grid { grid-template-columns: minmax(0, 1fr); } .whatif-results { order: -1; } }
+      .whatif-preview { margin: 1rem 0 0; }
+      .whatif-preview figcaption { margin-top: .35rem; }
+      .chart-box.small { height: 230px; }
       .whatif-row { display: grid; grid-template-columns: 1fr auto; gap: .25rem .75rem; align-items: baseline; margin-bottom: 1rem; }
       .whatif-row input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); min-height: 1.75rem; }
       .whatif-value { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
@@ -243,6 +255,14 @@
       .quick-more { margin: 0 0 1rem; }
       .quick-more > summary { cursor: pointer; font-weight: 600; margin-bottom: .75rem; }
       .tax-year-note { margin: .25rem 0 0; }
+      /* Scroll shadows: a wide table shows a shade at an edge that has more to scroll to. */
+      .table-wrap { background: linear-gradient(to right, var(--surface), var(--surface)) left / 2rem 100% no-repeat local, linear-gradient(to left, var(--surface), var(--surface)) right / 2rem 100% no-repeat local, radial-gradient(farthest-side at 0 50%, rgba(0,0,0,.18), transparent) left / .75rem 100% no-repeat scroll, radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,.18), transparent) right / .75rem 100% no-repeat scroll; }
+      @media (max-width: 640px) {
+        .table-wrap.tall { max-height: none; }
+        .jump-links a, .btn.small, .seg .btn { min-height: 40px; display: inline-flex; align-items: center; }
+        .jump-links { gap: .25rem .75rem; }
+      }
+      .units { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
       .jump-links { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin: -.25rem 0 1rem; font-size: .95rem; }
       #summary, #whatif, #charts, #year-by-year, #quickstart, #simulation { scroll-margin-top: 1rem; }
       details.config-section:not([open]) { padding-bottom: 1rem; }
@@ -253,7 +273,9 @@
         .app-header { padding: .6rem 0 .4rem; gap: .5rem; }
         .header-actions .btn { padding: .3rem .6rem; font-size: .85rem; }
         /* Fade the right edge so it is obvious the tab strip scrolls. */
-        .tabs { -webkit-mask-image: linear-gradient(to right, #000 85%, transparent); mask-image: linear-gradient(to right, #000 85%, transparent); }
+        /* Too narrow for the tab strip: a menu shows where you are and every section. */
+        .tabs { display: none; }
+        .tab-menu { display: flex; }
         .verdict-figure .big { font-size: 2rem; }
         .step-nav .btn { font-size: .85rem; }
       }

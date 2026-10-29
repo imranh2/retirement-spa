@@ -64,3 +64,20 @@ describe('State Pension age phasing to 68 (shipped defaults)', () => {
     expect(defaultStatePensionStartAge('1977-04-05', sched)).toBe(67);
   });
 });
+
+describe('State Pension when the plan starts after the base tax year', () => {
+  it('starts at the uprated rate, not deflated back to the base year', async () => {
+    const { simulate } = await import('../../src/engine/simulate');
+    const { cashOnlyScenario } = await import('../fixtures/testScenarios');
+    const run = (startDate: string) => {
+      const s = cashOnlyScenario({ startAge: 70, pot: 1_000_000, spend: 0, horizonYears: 2 });
+      s.people[0] = { ...s.people[0], dateOfBirth: `${Number(startDate.slice(0, 4)) - 70}-01-01`, niQualifyingYears: 35 };
+      s.sim = { ...s.sim, startDate };
+      return simulate(s, TEST_CONFIG, { runsOverride: 1 }).centralCase[0].statePension;
+    };
+    const base = run('2026-10-29');
+    const cfg = TEST_CONFIG.statePension;
+    const growth = Math.max(TEST_CONFIG.market.inflation.mean, (1 + TEST_CONFIG.market.wageGrowthRealPct) * (1 + TEST_CONFIG.market.inflation.mean) - 1, cfg.tripleLockFloorPct);
+    expect(run('2027-10-29')).toBeCloseTo(base * (1 + growth), 2);
+  });
+});

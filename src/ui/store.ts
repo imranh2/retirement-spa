@@ -38,6 +38,8 @@ export interface AppState {
   scenario: Scenario;
   config: ConfigBundle;
   results?: SimulationResult;
+  /** The plan (replaceCount) the results were run for; a different value means they belong to a previous plan. */
+  resultsPlan?: number;
   maxSpend?: MaxSpendValue;
   /** Earliest stop-work age at the target success rate (worked out after max spend). */
   retireAge?: RetireAgeValue;
@@ -248,15 +250,26 @@ export class Store {
     // The earliest stop-work age search runs at the same time on its own worker.
     const token = ++this.runToken;
     void this.runner.retireAge?.(scenario, config).then((retireAge) => { if (retireAge && token === this.runToken) this.set({ retireAge }); });
+    const plan = this.replaceCount;
     this.runner.run(scenario, config, {
       onProgress: (completed, total) => this.set({ progress: { completed, total } }),
-      onResult: (results) => this.set({ results, status: 'done', progress: { completed: results.runs, total: results.runs } }),
+      onResult: (results) => this.set({ results, resultsPlan: plan, status: 'done', progress: { completed: results.runs, total: results.runs } }),
       onMaxSpendProgress: (completed, total) => this.set({ maxSpendProgress: { completed, total } }),
       onMaxSpend: (maxSpend) => this.set({ maxSpend, maxSpendProgress: undefined }),
       // After the results arrive, an error can only come from the max-spend search: keep the results.
       onError: (message) => this.set(this.state.status === 'done' ? { runError: message, maxSpendProgress: undefined } : { status: 'error', runError: message, maxSpendProgress: undefined }),
       onCancelled: () => { if (this.state.status === 'running') this.set({ status: 'cancelled', maxSpendProgress: undefined }); else this.set({ maxSpendProgress: undefined }); },
     });
+  }
+
+  /** Results for the current plan: none while the only results are from a plan that was replaced. */
+  planResults(): SimulationResult | undefined {
+    return this.state.resultsPlan === this.replaceCount ? this.state.results : undefined;
+  }
+
+  /** True while a run is queued or going, so the results shown are from before the latest change. */
+  updating(): boolean {
+    return this.state.status === 'running' || this.state.status === 'queued';
   }
 
   /** Quick what-if check of a variant of the scenario (null if superseded or unavailable). */

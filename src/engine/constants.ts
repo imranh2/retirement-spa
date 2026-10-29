@@ -23,9 +23,12 @@ export const PERCENTILES: readonly number[] = [5, 10, 25, 50, 75, 90, 95].map((p
 export const MAX_SPEND_LOWER = 0.1;
 export const MAX_SPEND_UPPER = 5.0;
 export const MAX_SPEND_ITERATIONS = 14;
-export const MAX_SPEND_RUNS = 1000;
+/** The searches use the plan's own number of runs (up to this), for the same accuracy as its results. */
+export const MAX_SPEND_RUNS = 100_000;
 /** The quicker what-if version: fewer runs and iterations (to within about 1% of planned spending). */
-export const QUICK_SPEND_RUNS = 500;
-export const QUICK_SPEND_ITERATIONS = 9;
+export const QUICK_SPEND_RUNS = 2000;
+export const QUICK_SPEND_ITERATIONS = 11;
+/** Runs for a what-if check (success rate and the preview chart). */
+export const QUICK_CHECK_RUNS = 2000;
 /** Mortgage balances below this (GBP) are treated as repaid. */
 export const MORTGAGE_PAID_TOLERANCE_GBP = 0.01;

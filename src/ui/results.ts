@@ -13,22 +13,21 @@ export interface ResultsCtx { store: Store; rerender: () => void }
 const PREF_KEY = 'ukplanner.prefs.v1';
 
 /**
- * Per-viewer display preferences; storage failures fall back to the defaults.
- * real: charts in today's money. tableActual: the year-by-year table in actual pounds.
+ * Per-viewer choice of units for the Results page (storage failures fall back to the default):
+ * actual pounds (what you would pay or hold in each year) or today's money.
  */
-interface Prefs { real: boolean; tableActual: boolean }
-function readPrefs(): Prefs {
+function readActual(): boolean {
   try {
     const raw = localStorage.getItem(PREF_KEY);
-    const p = raw === null ? {} : (JSON.parse(raw) as Partial<Prefs>);
-    return { real: p.real !== false, tableActual: p.tableActual !== false };
-  } catch { return { real: true, tableActual: true }; }
+    const p = raw === null ? {} : (JSON.parse(raw) as { actual?: boolean; tableActual?: boolean });
+    return (p.actual ?? p.tableActual) !== false;
+  } catch { return true; }
 }
 function writePrefs(): void {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ real: realMode, tableActual })); } catch { /* not persisted */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ actual: tableActual })); } catch { /* not persisted */ }
 }
 
-let { real: realMode, tableActual } = readPrefs();
+let tableActual = readActual();
 
 /** End-of-year balances; every other money column is a flow during the year. */
 const END_OF_YEAR = new Set<keyof CentralCaseRow>(['portfolioEnd', 'propertyEquityEnd', 'mortgageBalanceEnd']);
@@ -36,7 +35,7 @@ const END_OF_YEAR = new Set<keyof CentralCaseRow>(['portfolioEnd', 'propertyEqui
 function inActualPounds(row: CentralCaseRow): CentralCaseRow {
   const out = { ...row } as Record<string, unknown>;
   for (const [k, v] of Object.entries(row)) {
-    if (typeof v !== 'number' || k === 'age' || k === 'priceIndex' || k === 'priceIndexEnd') continue;
+    if (typeof v !== 'number' || k === 'age' || k === 'priceIndex' || k === 'priceIndexEnd' || k === 'months') continue;
     out[k] = v * ((END_OF_YEAR.has(k as keyof CentralCaseRow) ? row.priceIndexEnd : row.priceIndex) ?? 1);
   }
   return out as unknown as CentralCaseRow;
@@ -141,14 +140,14 @@ export function progressSlot(store: Store): HTMLElement {
 export function renderResults(c: ResultsCtx): HTMLElement {
   destroyCharts();
   const st = c.store.getState();
-  const r = st.results;
+  const r = c.store.planResults();
   const s = st.scenario;
   const statusMsg = st.status === 'invalid' ? h('p', { class: 'error' }, 'The scenario or rules have errors, so the simulation has not run. See the highlighted fields (Overview lists them).')
     : st.status === 'error' ? h('p', { class: 'error', role: 'alert' }, `Simulation failed: ${st.runError ?? 'unknown error'}`)
       : st.status === 'cancelled' ? h('p', { class: 'muted' }, 'Run cancelled. Results below (if any) are from the previous run.', h('button', { type: 'button', class: 'btn small', onclick: () => c.store.runNow() }, 'Run again'))
         : null;
   if (!r) {
-    return h('div', {}, h('h2', {}, 'Results'), progressSlot(c.store), statusMsg ?? h('p', { class: 'muted' }, 'Results appear here after the first run.'),
+    return h('div', {}, h('h2', {}, 'Results'), progressSlot(c.store), statusMsg ?? h('p', { class: 'muted' }, st.status === 'running' || st.status === 'queued' ? 'Working out your results…' : 'Results appear here after the first run.'),
       ...['Portfolio', 'Net worth', 'Depletion', 'Income', 'Tax'].map(() => h('div', { class: 'chart placeholder' }, h('div', { class: 'chart-box' }))));
   }
 
@@ -157,11 +156,15 @@ export function renderResults(c: ResultsCtx): HTMLElement {
   const stale = st.status === 'running' || st.status === 'queued';
   const extra = costsOnTop(s);
 
-  const toggleId = 'real-toggle';
-  const toggle = h('span', { class: 'toggle' },
-    h('input', { type: 'checkbox', id: toggleId, checked: realMode, onchange: (e: Event) => { realMode = (e.target as HTMLInputElement).checked; writePrefs(); c.rerender(); } }),
-    h('label', { for: toggleId }, ' Show in today’s money (real)'));
-  const moneyLabel = realMode ? '£ (today’s money)' : '£ (nominal, future money)';
+  const realMode = !tableActual;
+  /** One switch for the page's units, shown at the top and again above the table. */
+  const unitsSwitch = () => h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Show amounts in' },
+    ...([[true, 'Actual pounds'], [false, 'Today’s money']] as const).map(([actual, label]) => h('button', {
+      type: 'button', role: 'radio', class: 'btn small', 'aria-checked': String(tableActual === actual),
+      onclick: () => { tableActual = actual; writePrefs(); c.rerender(); },
+    }, label)));
+  const toggle = h('div', { class: 'units' }, h('span', { class: 'muted small' }, 'Charts and table in'), unitsSwitch());
+  const moneyLabel = realMode ? '£ (today’s money)' : '£ (actual pounds in each year)';
 
   const portfolioBands = realMode ? r.portfolioReal : r.portfolioNominal;
   const netWorthBands = realMode ? r.netWorthReal : (r.netWorthNominal ?? r.netWorthReal);
@@ -180,18 +183,14 @@ export function renderResults(c: ResultsCtx): HTMLElement {
   const dep = chartBox('Chance the money has run out, by age', 'chart-depletion', r.depletionAgeHistogram.length === 0
     ? 'No simulated run ran out of money.'
     : `Share of the ${r.runs.toLocaleString('en-GB')} simulated futures that could no longer pay for ${whatMustBePaid(s)} by each age. The value at ${s.sim.horizonAge - 1} is the overall failure rate (${formatPct(1 - r.successRate)}).`);
-  const inc = chartBox('Where the money comes from', 'chart-income', 'Average income and withdrawals per year, in today’s money, with withdrawals net of tax. Each year averages only the runs that still met spending in full, so the bars show what a funded year looks like; the dashed line shows how many runs that is.');
-  const tax = chartBox('Tax paid by age', 'chart-tax', 'Average income tax, NI and CGT per year in today’s money, over runs that still met spending in full that year.');
+  const inc = chartBox('Where the money comes from (today’s money)', 'chart-income', 'Average income and withdrawals per year, in today’s money, with withdrawals net of tax. Each year averages only the runs that still met spending in full, so the bars show what a funded year looks like; the dashed line shows how many runs that is.');
+  const tax = chartBox('Tax paid by age (today’s money)', 'chart-tax', 'Average income tax, NI and CGT per year in today’s money, over runs that still met spending in full that year.');
 
   const maxSpend = st.maxSpend;
 
   const rows = tableActual ? r.centralCase.map(inActualPounds) : r.centralCase;
   const money = tableActual ? 'actual pounds' : 'today’s money';
-  const tableView = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Show the table in' },
-    ...([[true, 'Actual pounds'], [false, 'Today’s money']] as const).map(([actual, label]) => h('button', {
-      type: 'button', role: 'radio', class: 'btn small', 'aria-checked': String(tableActual === actual),
-      onclick: () => { tableActual = actual; writePrefs(); c.rerender(); },
-    }, label)));
+  const tableView = unitsSwitch();
   // The central run stops in the year the money runs out; say so rather than let the table just end.
   const lastRow = rows[rows.length - 1];
   const runsOut = lastRow !== undefined && lastRow.age < s.sim.horizonAge - 1 ? lastRow : undefined;
@@ -201,7 +200,9 @@ export function renderResults(c: ResultsCtx): HTMLElement {
     h('thead', {}, h('tr', {}, ...cols.map((col) => h('th', { scope: 'col' }, col.label)))),
     h('tbody', {}, ...rows.map((row) => h('tr', {}, ...cols.map((col) => {
       const v = row[col.key];
-      return col.key === 'age' ? h('th', { scope: 'row' }, String(v)) : h('td', {}, typeof v === 'number' ? formatMoney(v) : v);
+      if (col.key === 'age') return h('th', { scope: 'row' }, String(v));
+      if (col.key === 'taxYear' && row.months !== undefined && row.months < 12) return h('td', { title: `This plan starts part-way through the tax year, so this row covers ${row.months} months` }, `${String(v)} (${row.months} mo)`);
+      return h('td', {}, typeof v === 'number' ? formatMoney(v) : v);
     }))))));
 
   const el = h('div', { class: stale ? 'results stale' : 'results' },
@@ -215,7 +216,7 @@ export function renderResults(c: ResultsCtx): HTMLElement {
     whatIfPanel(c.store, r),
     h('div', { class: 'stats' },
       h('div', { class: 'card stat' }, h('h3', {}, `Portfolio at age ${s.sim.horizonAge}`), h('p', { class: 'big' }, formatMoney(at(portfolioBands.p50))),
-        h('p', { class: 'muted' }, `Savings and investments (not property), typical (median) outcome, ${realMode ? 'today’s money' : 'nominal'}. ${at(portfolioBands.p5) < 1 ? 'At least 1 run in 20 has run out by then' : `1 run in 20 ends below ${formatMoney(at(portfolioBands.p5))}`}; 1 in 20 ends above ${formatMoney(at(portfolioBands.p95))}.`)),
+        h('p', { class: 'muted' }, `Savings and investments (not property), typical (median) outcome, ${realMode ? 'today’s money' : 'actual pounds at that age'}. ${at(portfolioBands.p5) < 1 ? 'At least 1 run in 20 has run out by then' : `1 run in 20 ends below ${formatMoney(at(portfolioBands.p5))}`}; 1 in 20 ends above ${formatMoney(at(portfolioBands.p95))}.`)),
       h('div', { class: 'card stat' }, h('h3', {}, 'Lifetime tax paid'), h('p', { class: 'big' }, formatMoney(r.taxPaidTotal.median)),
         h('p', { class: 'muted' }, `Income tax, NI and CGT for the whole plan. Median, today’s money. 10th–90th percentile: ${formatMoney(r.taxPaidTotal.p10)} – ${formatMoney(r.taxPaidTotal.p90)}.`))),
     r.warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Warnings'), h('ul', { class: 'warning-list' }, ...r.warnings.map((w) => h('li', {}, w)))) : null,
@@ -224,7 +225,7 @@ export function renderResults(c: ResultsCtx): HTMLElement {
       h('div', { class: 'section-head' }, h('h3', {}, 'Year by year (central case: average returns, no ups and downs)'),
         h('span', { class: 'row-btns' }, tableView,
           h('button', { type: 'button', class: 'btn small', onclick: () => downloadText(`year-by-year-${tableActual ? 'actual' : 'todays-money'}.csv`, 'text/csv', centralCsv(rows)) }, 'Download CSV'))),
-      h('p', { class: 'muted' }, `One run using the average return and inflation (${formatPct(st.config.market.inflation.mean)} a year) every year, in ${money}. ${tableActual ? 'Amounts are what you would actually pay or hold in each year, so spending and salary grow with prices. ' : 'Amounts are in today’s prices, so they compare directly with what things cost now. '}Useful for checking the model by hand: income plus withdrawals covers spending, mortgage, property costs, tax, NI and “Saved from pay”; anything left is “Spare income”, which is ${surplusDescription(s)}.${hasMortgage ? (tableActual
+      h('p', { class: 'muted' }, `One run using the average return and inflation (${formatPct(st.config.market.inflation.mean)} a year) every year, in ${money}. ${tableActual ? 'Amounts are what you would actually pay or hold in each year, so spending and salary grow with prices. ' : 'Amounts are in today’s prices, so they compare directly with what things cost now. '}Real markets go up and down, and a bad run early on costs more than a good run later gives back, so a typical future does a little worse than this table (see Money lasts above). Useful for checking the model by hand: income plus withdrawals covers spending, mortgage, property costs, tax, NI and “Saved from pay”; anything left is “Spare income”, which is ${surplusDescription(s)}.${hasMortgage ? (tableActual
         ? ' A fixed-rate mortgage payment stays the same each year until the fix ends, when it is recalculated at the new rate. “of which interest” shows how much of each year’s payments is interest, which falls as the balance is paid down.'
         : ' Mortgage payments are fixed in pounds, so in today’s money they look smaller each year as prices rise; switch to actual pounds to see what you would pay. “of which interest” shows how much of each year’s payments is interest.') : ''}${cols.length < CENTRAL_COLUMNS.length ? ' Columns that are always zero are hidden here but included in the CSV.' : ''}`),
       runsOut ? h('p', { class: 'warning' }, `With average returns the money runs out at age ${runsOut.age}, so the table stops there.${runsOut.mortgageBalanceEnd >= 1 ? ` The mortgage still had ${formatMoney(runsOut.mortgageBalanceEnd)} left to pay (${money}).` : ''} Later years are not shown because the plan can no longer pay its way.`) : null,

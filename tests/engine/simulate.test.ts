@@ -54,7 +54,7 @@ describe('(c) locked pension', () => {
     }
     const at57 = r.ages.indexOf(57);
     expect(r.incomeBySourceMeanReal.isa.slice(0, at57).every((v) => v > 0)).toBe(true);
-    expect(r.warnings.some((w) => /locked until age 57/.test(w))).toBe(true);
+    expect(r.warnings.some((w) => /can’t be used until age 57/.test(w))).toBe(true);
   });
   it('pension is used once accessible when other pots are empty', () => {
     const s = bridgeScenario(1);
@@ -284,5 +284,15 @@ describe('State Pension with no earnings', () => {
     s.people[0].niCreditsUntilAge = 60;
     const credited = at(s);
     expect(credited / none).toBeCloseTo(30 / 20, 6);
+  });
+});
+
+describe('how low spending gets with a flexible strategy', () => {
+  it('reports the 1-in-10 lowest retirement spending, below the plan when markets fall', () => {
+    const s = bridgeScenario(300);
+    s.strategy = { kind: 'percentOfPortfolio', pct: 0.04 };
+    const r = simulate(s, TEST_CONFIG);
+    expect(r.retirementSpendLow).toBeGreaterThan(0);
+    expect(r.retirementSpendLow).toBeLessThan(r.centralCase[r.centralCase.length - 1].spending * 2);
   });
 });

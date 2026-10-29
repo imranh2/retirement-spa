@@ -15,7 +15,7 @@ export interface MaxSpendValue { multiplier: number; annualSpendReal: number; ta
 /** Earliest stop-work age at the target success rate . */
 export type RetireAgeValue = RetireAgeOutcome;
 /** A quick what-if result: enough for a success rate and how long the money lasts. */
-export type QuickResult = Pick<SimulationResult, 'ages' | 'runs' | 'successRate' | 'depletionAgeHistogram'>;
+export type QuickResult = Pick<SimulationResult, 'ages' | 'runs' | 'successRate' | 'depletionAgeHistogram' | 'portfolioReal'>;
 
 /** Messages from the worker to the UI. */
 export type WorkerResponse =

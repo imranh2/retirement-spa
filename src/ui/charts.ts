@@ -155,3 +155,46 @@ export function stackedBars(canvas: HTMLCanvasElement, ages: number[], series: R
     },
   } as ChartConfiguration);
 }
+
+/** What the What if? preview draws: the plan and (once checked) the what-if, median and a bad case. */
+export interface PreviewSeries {
+  ages: number[];
+  planMedian: number[];
+  planLow: number[];
+  median?: number[];
+  low?: number[];
+}
+
+const previews = new WeakMap<HTMLCanvasElement, ChartType>();
+
+/**
+ * The What if? preview: portfolio by age for the plan (grey, dashed) and the what-if (accent),
+ * each as a median and a 1-in-10 bad case. Created once per canvas, then updated in place so
+ * it follows the sliders without flicker.
+ */
+export async function drawPreview(canvas: HTMLCanvasElement, s: PreviewSeries): Promise<void> {
+  const t = theme();
+  const datasets = [
+    { label: 'What if: typical', data: s.median ?? [], borderColor: t.accent, backgroundColor: t.accent, borderWidth: 2.5, pointRadius: 0 },
+    { label: 'What if: bad case (1 in 10)', data: s.low ?? [], borderColor: t.accent, backgroundColor: t.accent, borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0 },
+    { label: 'Your plan: typical', data: s.planMedian, borderColor: t.muted, backgroundColor: t.muted, borderWidth: 1.5, pointRadius: 0 },
+    { label: 'Your plan: bad case', data: s.planLow, borderColor: t.muted, backgroundColor: t.muted, borderWidth: 1, borderDash: [2, 3], pointRadius: 0 },
+  ];
+  const existing = previews.get(canvas);
+  if (existing) {
+    existing.data.labels = s.ages;
+    existing.data.datasets.forEach((d, i) => { d.data = datasets[i].data; });
+    existing.update('none');
+    return;
+  }
+  const Chart = await loadChart();
+  if (!canvas.isConnected || previews.has(canvas)) return;
+  const o = baseOptions('£ (today’s money)');
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: { labels: s.ages, datasets },
+    options: { ...o, plugins: { ...o?.plugins, legend: { labels: { color: t.text, boxHeight: 2 } } }, scales: { ...o?.scales, y: { ...o?.scales?.y, min: 0 } } },
+  });
+  previews.set(canvas, chart);
+  live.add(chart);
+}
