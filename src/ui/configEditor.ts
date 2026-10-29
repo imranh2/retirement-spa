@@ -220,6 +220,10 @@ function defaultsBanner(c: ConfigCtx): HTMLElement | null {
     if (typeof v === 'number') return meta?.unit === 'pct' ? `${toPercentInput(v)}%` : meta?.unit === 'gbp' ? formatMoney(v) : String(v);
     if (typeof v === 'string') return OPTION_LABELS[v] ?? v;
     if (/^tax\.[^.]+$/.test(path)) return `${path.slice('tax.'.length)} rules`;
+    // Lists of choices (e.g. which thresholds grow after the freeze): their names, or "None".
+    if (Array.isArray(v) && v.every((x) => typeof x === 'string')) {
+      return v.length === 0 ? 'None' : v.map((x: string) => UPRATED_LABEL[x as UpratedItem] ?? OPTION_LABELS[x] ?? x).join(', ');
+    }
     return JSON.stringify(v);
   };
   const label = (path: string) => {
