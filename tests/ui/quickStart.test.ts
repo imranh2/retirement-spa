@@ -93,3 +93,14 @@ describe('quick start checks the answers before building', () => {
     expect(quickStartProblems({ ...base, stopWorkAge: 30 }, START)[0]).toMatch(/stop work/);
   });
 });
+
+describe('rent ending before a planned purchase', () => {
+  it('is noted, with the ages no rent is paid', async () => {
+    const { housingGap, housingGapText } = await import('../../src/ui/scenarioTabs');
+    const s = build({ salary: 80_000, cash: 120_000, housing: 'rentThenBuy', rentMonthly: 1_100, buyAtAge: 45, buyPrice: 300_000 });
+    expect(housingGap(s)).toBeNull();                              // rent runs until the purchase
+    s.rentPaid = [{ ...s.rentPaid![0], untilAge: 42 }];
+    expect(housingGap(s)).toEqual({ from: 42, to: 45, buyAge: 45 });
+    expect(housingGapText(s)).toMatch(/from age 42 to 44, before you buy at 45/);
+  });
+});

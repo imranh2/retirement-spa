@@ -115,6 +115,13 @@
 
       .field { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
       .field-head { display: flex; gap: .35rem; align-items: center; flex-wrap: wrap; min-height: 1.75rem; }
+      /* Side by side, room for a two-line label with the label at the bottom: inputs in a row line up
+         even when one label wraps, and the help button stays beside its label. */
+      @media (min-width: 641px) {
+        .grid > .field > .field-head { flex-wrap: nowrap; align-items: flex-end; min-height: 2.6rem; }
+        .grid > .field > .field-head label { min-width: 0; }
+        .grid > .field > .field-head .help-btn { flex: none; }
+      }
       .local-error:empty { display: none; }
       /* The tab strip scrolls, which clips an outside focus ring: draw it inside. */
       .tab:focus-visible { outline-offset: -3px; }

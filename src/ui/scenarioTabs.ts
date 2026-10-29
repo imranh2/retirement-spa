@@ -277,7 +277,8 @@ export function renderOverview(c: TabCtx): HTMLElement {
   const moreIssues = st.scenarioErrors.length - issues.length;
   const shortfall = r ? shortfallText(r) : null;
   const purchase = r ? purchaseText(r, s) : null;
-  const warnings = [...(purchase ? [purchase] : []), ...(shortfall ? [shortfall] : []), ...(r?.warnings ?? [])].map((w) => h('li', {}, w));
+  const gapNote = housingGapText(s);
+  const warnings = [...(gapNote ? [gapNote] : []), ...(purchase ? [purchase] : []), ...(shortfall ? [shortfall] : []), ...(r?.warnings ?? [])].map((w) => h('li', {}, w));
   const replaceCard = (title: string, description: string, load: () => void) => h('div', { class: 'card' },
     h('h4', {}, title), h('p', { class: 'muted' }, description),
     (() => {
@@ -624,7 +625,7 @@ function purchaseFields(c: TabCtx, p: Property, i: number): Node[] {
   const duty = rules ? stampDuty(p.value, ftb, rules.stampDuty, ownsAnother) : 0;
   const lisaOk = ftb && rules && p.value <= rules.lisa.homePriceCap && sc(c).accounts.some((a) => a.type === 'lisa');
   return [
-    withTaxYear(c, numberField({ label: 'Buy at age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: p.buyAtAge ?? null, errorPath: `${pre}.buyAtAge`, help: 'Until then the home is not owned: no value, costs or mortgage. Rent with no end age stops at this age.', onChange: (v) => setS(c, `${pre}.buyAtAge`, v ?? 0) }), 0, 'from', ''),
+    withTaxYear(c, numberField({ label: 'Buy at age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: p.buyAtAge ?? null, errorPath: `${pre}.buyAtAge`, help: 'Until then the home is not owned: no value, costs or mortgage. Rent with no end age stops at this age.', onChange: (v) => { setS(c, `${pre}.buyAtAge`, v ?? 0); refreshHousingGap(c); } }), 0, 'from', ''),
     numberField({ label: 'Deposit', unit: 'pct', min: 0, max: 1, step: 0.01, value: p.depositPct ?? 0, errorPath: `${pre}.depositPct`, help: 'Share of the price paid from savings; the mortgage below pays the rest.', onChange: (v) => { setS(c, `${pre}.depositPct`, v ?? 0); refreshPurchase(c, i); } }),
     numberField({ label: 'Fees', unit: 'gbp', nullable: true, min: 0, step: 100, value: p.buyingCosts, placeholder: 'none', errorPath: `${pre}.buyingCosts`, help: 'Legal, survey, mortgage and moving costs, in today’s money. Stamp duty is worked out for you.', onChange: (v) => { setS(c, `${pre}.buyingCosts`, v ?? undefined); refreshPurchase(c, i); } }),
     ownsAnother || !p.isMainResidence ? h('p', { class: 'muted full' }, ownsAnother ? `You will own another home then, so stamp duty includes the ${formatPct(rules?.stampDuty.surchargeRate ?? 0)} surcharge on additional homes, and there is no first-time buyer relief.` : 'First-time buyer relief applies only to a home you will live in (tick Main residence).') : checkboxField({ label: 'First-time buyer', checked: p.firstTimeBuyer === true, errorPath: `${pre}.firstTimeBuyer`, help: 'Stamp duty relief (England and NI), and a Lifetime ISA can go towards the deposit if the price is within its cap.', onChange: (v) => { setS(c, `${pre}.firstTimeBuyer`, v); c.rerender(); } }),
@@ -717,6 +718,42 @@ function purchaseAgeFor(s: Scenario, r: RentPaid): number | undefined {
   return (r.fromAge ?? 0) < first ? first : undefined;
 }
 
+/**
+ * Years before a planned home purchase with no rent being paid, when the plan rents at some point
+ * (e.g. rent ending at 38 while buying at 40). Maybe intended (living with family), so only a note.
+ */
+export function housingGap(s: Scenario): { from: number; to: number; buyAge: number } | null {
+  const rents = s.rentPaid ?? [];
+  const buys = s.properties.filter((p) => p.isMainResidence && p.buyAtAge !== undefined).map((p) => p.buyAtAge as number);
+  const now = startAge(s, 0);
+  if (rents.length === 0 || buys.length === 0 || now === undefined) return null;
+  const buyAge = Math.min(...buys);
+  const paying = (age: number) => rents.some((r) => (r.fromAge ?? 0) <= age && age < (r.untilAge ?? purchaseAgeFor(s, r) ?? Number.POSITIVE_INFINITY));
+  for (let age = now; age < buyAge; age++) {
+    if (paying(age)) continue;
+    let to = age;
+    while (to < buyAge && !paying(to)) to++;
+    return { from: age, to, buyAge };
+  }
+  return null;
+}
+
+/** Update the housing-gap note on the Home & Property tab after a rent or purchase age changes. */
+function refreshHousingGap(c: TabCtx): void {
+  const el = document.getElementById('housing-gap');
+  if (!el) return;
+  const text = housingGapText(sc(c));
+  el.hidden = text === null;
+  el.textContent = text ?? '';
+}
+
+/** The housing-gap note in words, or null. */
+export function housingGapText(s: Scenario): string | null {
+  const g = housingGap(s);
+  if (!g) return null;
+  return `No rent is paid ${g.to - g.from === 1 ? `at age ${g.from}` : `from age ${g.from} to ${g.to - 1}`}, before you buy at ${g.buyAge}. If you will be renting then, extend the rent’s end age (or leave it blank to rent until you buy).`;
+}
+
 /** Rent paid on a home: monthly amount, yearly rise and the ages it applies. */
 function rentFields(c: TabCtx, r: RentPaid, i: number): Node[] {
   const pre = `rentPaid[${i}]`;
@@ -726,21 +763,22 @@ function rentFields(c: TabCtx, r: RentPaid, i: number): Node[] {
     textField({ label: 'Name', value: r.name, errorPath: `${pre}.name`, onChange: (v) => setS(c, `${pre}.name`, v) }),
     numberField({ label: 'Rent', unit: 'gbpMonth', min: 0, step: 25, value: r.monthly, errorPath: `${pre}.monthly`, help: 'In today’s money. Bills, council tax and the like belong in living costs (Spending & Strategy).', onChange: (v) => setS(c, `${pre}.monthly`, v ?? 0) }),
     numberField({ label: 'Rise above inflation each year', unit: 'pct', min: -0.2, max: 0.2, step: 0.005, value: r.growthRealPct, errorPath: `${pre}.growthRealPct`, help: 'On top of inflation: 0% means rent keeps pace with prices. UK rents have risen a little faster than prices over the long run.', onChange: (v) => setS(c, `${pre}.growthRealPct`, v ?? 0) }),
-    withTaxYear(c, numberField({ label: 'From age (person 1)', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: r.fromAge, placeholder: 'now', errorPath: `${pre}.fromAge`, onChange: (v) => setS(c, `${pre}.fromAge`, v ?? undefined) }), 0, 'from', 'Already started'),
-    withTaxYear(c, numberField({ label: 'Until age (not including)', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: r.untilAge, placeholder: buyAge !== undefined ? `until you buy (${buyAge})` : 'for life', errorPath: `${pre}.untilAge`, help: buyAge !== undefined ? `Leave blank to rent until you buy your home at ${buyAge}.` : 'Leave blank to rent for life.', onChange: (v) => setS(c, `${pre}.untilAge`, v ?? undefined) }), 0, 'until', buyAge !== undefined ? `Until you buy (age ${buyAge})` : 'For life'),
+    withTaxYear(c, numberField({ label: 'From age (person 1)', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: r.fromAge, placeholder: 'now', errorPath: `${pre}.fromAge`, onChange: (v) => { setS(c, `${pre}.fromAge`, v ?? undefined); refreshHousingGap(c); } }), 0, 'from', 'Already started'),
+    withTaxYear(c, numberField({ label: 'Until age (not including)', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: r.untilAge, placeholder: buyAge !== undefined ? `until you buy (${buyAge})` : 'for life', errorPath: `${pre}.untilAge`, help: buyAge !== undefined ? `Leave blank to rent until you buy your home at ${buyAge}.` : 'Leave blank to rent for life.', onChange: (v) => { setS(c, `${pre}.untilAge`, v ?? undefined); refreshHousingGap(c); } }), 0, 'until', buyAge !== undefined ? `Until you buy (age ${buyAge})` : 'For life'),
   ];
 }
 
 export function renderProperty(c: TabCtx): HTMLElement {
   const s = sc(c);
   const rents = s.rentPaid ?? [];
+  const gap = housingGapText(s);
   const rent = list(c, {
     title: 'Renting', path: 'rentPaid', items: rents,
+    adders: h('div', {}, h('p', { class: 'warning small', id: 'housing-gap', 'aria-live': 'polite', hidden: gap === null }, gap ?? ''),
+      h('button', { type: 'button', class: 'btn', onclick: () => { setS(c, 'rentPaid', [...rents, { id: uniqueId(rents.map((x) => x.id), 'rent'), name: rents.length === 0 ? 'Rent' : 'Later rent', monthly: 1200, growthRealPct: 0 } satisfies RentPaid]); c.rerender(); } }, 'Add rent')),
     intro: 'If you rent your home, add the rent here. It is paid every month on top of your living costs, like a mortgage. Add another period if it will change, e.g. moving somewhere cheaper later.',
     heading: (r) => r.name || 'Rent',
     body: (r, i) => rentFields(c, r, i),
-    onAdd: () => setS(c, 'rentPaid', [...rents, { id: uniqueId(rents.map((x) => x.id), 'rent'), name: rents.length === 0 ? 'Rent' : 'Later rent', monthly: 1200, growthRealPct: 0 } satisfies RentPaid]),
-    addLabel: 'Add rent',
   });
   return h('div', {}, rent, list(c, {
     title: 'Property & mortgages', path: 'properties', items: s.properties,
