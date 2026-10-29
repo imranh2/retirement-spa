@@ -7,7 +7,7 @@ import { taxYearStartYear } from '../model/dates';
 import type { Store } from './store';
 import { h, confirmButton, extLink } from './dom';
 import { numberField, textField, selectField, checkboxField, errorSlot, type InputUnit } from './fields';
-import { formatPct } from './format';
+import { formatMoney, formatPct, toPercentInput } from './format';
 
 export interface ConfigCtx { store: Store; rerender: () => void }
 
@@ -37,9 +37,17 @@ function fieldExtras(c: ConfigCtx, path: string, meta: FieldMeta): HTMLElement {
 }
 
 /** Source link and last-verified date, shown inside the field's help text. */
+/** Readable names for enum values in the rules editor (anything missing is shown as it is). */
+const OPTION_LABELS: Record<string, string> = {
+  adjustedTripleLock: 'Adjusted triple lock (earnings link ends 2030)', tripleLock: 'Triple lock',
+  inflation: 'Inflation', earnings: 'Earnings', fixed: 'Fixed rate', wageGrowth: 'Wage growth', none: 'None (stay frozen)',
+  'england-wales-ni': 'England, Wales and Northern Ireland', scotland: 'Scotland',
+};
+
 function sourceNote(meta: FieldMeta): HTMLElement | null {
   if (!meta.sourceUrl) return null;
-  return h('span', { class: 'source-note' }, extLink(meta.sourceUrl, 'Source (gov.uk)'), meta.lastVerified ? `, checked ${meta.lastVerified}.` : '.');
+  const site = new URL(meta.sourceUrl).hostname.replace(/^www\./, '');
+  return h('span', { class: 'source-note' }, extLink(meta.sourceUrl, `Source (${site})`), meta.lastVerified ? `, checked ${meta.lastVerified}.` : '.');
 }
 
 /** Render one registry field at a concrete path. */
@@ -48,7 +56,7 @@ function configField(c: ConfigCtx, path: string, meta: FieldMeta = fieldFor(path
   const base = { label: labelOverride ?? meta.label, errorPath: path, help: meta.tooltip, helpExtra: sourceNote(meta), extra: fieldExtras(c, path, meta), disabled: meta.readOnly };
   const set = (v: unknown) => c.store.setConfigValue(path, v);
   if (meta.unit === 'enum' && meta.options) {
-    return selectField({ ...base, value: String(value), options: meta.options.map((o) => ({ value: o, label: o })), onChange: set });
+    return selectField({ ...base, value: String(value), options: meta.options.map((o) => ({ value: o, label: OPTION_LABELS[o] ?? o })), onChange: set });
   }
   if (meta.unit === 'date') return textField({ ...base, value: String(value ?? ''), onChange: set, placeholder: path.includes('Year') || path.includes('TaxYear') ? 'e.g. 2030/31' : 'yyyy-mm-dd' });
   if (meta.unit === 'bool') return checkboxField({ ...base, checked: value === true, onChange: set });
@@ -203,15 +211,33 @@ function upratedItemsEditor(c: ConfigCtx): HTMLElement {
 function defaultsBanner(c: ConfigCtx): HTMLElement | null {
   const diff = c.store.getDefaultsUpdateDiff();
   if (diff.length === 0) return null;
-  const show = (v: unknown) => (typeof v === 'number' ? String(v) : JSON.stringify(v));
+  const ASSETS = ['equities', 'bonds', 'cash', 'property', 'inflation'];
+  const corr = (path: string) => /^market\.correlations\[(\d+)\]\[(\d+)\]$/.exec(path);
+  /** A value as the rules editor would show it: 2%, £12,570, "Triple lock"; a whole new tax year by name. */
+  const show = (v: unknown, path: string): string => {
+    if (v === undefined || v === null) return '—';
+    const meta = fieldFor(path);
+    if (typeof v === 'number') return meta?.unit === 'pct' ? `${toPercentInput(v)}%` : meta?.unit === 'gbp' ? formatMoney(v) : String(v);
+    if (typeof v === 'string') return OPTION_LABELS[v] ?? v;
+    if (/^tax\.[^.]+$/.test(path)) return `${path.slice('tax.'.length)} rules`;
+    return JSON.stringify(v);
+  };
+  const label = (path: string) => {
+    const m = corr(path);
+    if (m) return `Correlation: ${ASSETS[Number(m[1])]} and ${ASSETS[Number(m[2])]}`;
+    if (/^tax\.[^.]+$/.test(path)) return `New tax year ${path.slice('tax.'.length)}`;
+    return fieldFor(path)?.label ?? path;
+  };
+  // A correlation appears twice (i,j and j,i); list it once, and accepting it updates both.
+  const rows = diff.filter((d) => { const m = corr(d.path); return !m || Number(m[1]) < Number(m[2]); });
   return h('section', { class: 'banner info', 'aria-labelledby': 'defaults-banner-title' },
     h('h3', { id: 'defaults-banner-title' }, `New defaults available (${c.store.getState().config.defaultsVersion} → current)`),
     h('p', {}, 'The app ships updated values for these fields. Your values are kept unless you accept the new one.'),
     h('div', { class: 'table-wrap' }, h('table', { class: 'data-table' },
       h('thead', {}, h('tr', {}, h('th', {}, 'Field'), h('th', {}, 'Yours'), h('th', {}, 'Old default'), h('th', {}, 'New default'), h('th', {}, h('span', { class: 'sr-only' }, 'Actions')))),
-      h('tbody', {}, ...diff.map((d) => h('tr', {},
-        h('td', {}, `${fieldFor(d.path)?.label ?? d.path}`, h('br'), h('code', {}, d.path)),
-        h('td', {}, show(d.yours)), h('td', {}, show(d.oldDefault)), h('td', {}, show(d.newDefault)),
+      h('tbody', {}, ...rows.map((d) => h('tr', {},
+        h('td', {}, label(d.path), h('br'), h('code', {}, d.path)),
+        h('td', {}, show(d.yours, d.path)), h('td', {}, show(d.oldDefault, d.path)), h('td', {}, show(d.newDefault, d.path)),
         h('td', { class: 'row-btns' },
           h('button', { type: 'button', class: 'btn small primary', onclick: () => { c.store.acceptDefault(d.path); c.rerender(); } }, 'Accept new'),
           h('button', { type: 'button', class: 'btn small', onclick: () => { c.store.keepMine(d.path); c.rerender(); } }, 'Keep mine'))))))));

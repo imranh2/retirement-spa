@@ -12,7 +12,7 @@ export interface ValidationIssue {
 
 const MATRIX_SIZE = 5;
 /** 'date' fields holding a tax-year label rather than a calendar date. */
-const TAX_YEAR_FIELD = /(?:^|\.)(?:taxYear|baseTaxYear|thresholdsFrozenThroughTaxYear)$/;
+const TAX_YEAR_FIELD = /(?:^|\.)(?:taxYear|baseTaxYear|thresholdsFrozenThroughTaxYear|doubleLockFromTaxYear)$/;
 /** Regions the engine implements; other registry options are placeholders. */
 const IMPLEMENTED_REGIONS = ['england-wales-ni'];
 

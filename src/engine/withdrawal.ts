@@ -152,7 +152,7 @@ export function executeWithdrawals(ctx: WithdrawalContext, need: number, input: 
 
   const incomeOf = (p: number): TaxableIncome => {
     const base = ctx.people[p].income;
-    return { nonSavings: base.nonSavings + extraNonSavings[p], savings: base.savings, dividends: base.dividends };
+    return { ...base, nonSavings: base.nonSavings + extraNonSavings[p] };
   };
   const taxOf = (inc: TaxableIncome, p: number) => calculateIncomeTax(inc, cfg, { basicBandExtension: ctx.people[p].basicBandExtension });
 

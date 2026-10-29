@@ -1,4 +1,76 @@
-import type { ConfigBundle } from '../config/configTypes';
+import type { ConfigBundle, TaxYearConfig } from '../config/configTypes';
+
+/**
+ * One tax year's rules. 2026/27 values; later years override what changes.
+ * A fresh object each call, so tax years never share nested objects.
+ */
+function rules2026(taxYear: string): TaxYearConfig {
+  return {
+    taxYear,
+    region: 'england-wales-ni',
+    personalAllowance: 12570,                 // verified gov.uk 2026-10-28
+    taperThreshold: 100000,                   // verified gov.uk 2026-10-28
+    taperRatePerPound: 0.5,                   // verified gov.uk 2026-10-28
+    incomeTaxBands: [
+      { upTo: 37700, rate: 0.20 },            // verified gov.uk 2026-10-28
+      { upTo: 125140, rate: 0.40 },           // verified gov.uk 2026-10-28
+      { upTo: null, rate: 0.45 },             // verified gov.uk 2026-10-28
+    ],
+    savings: {
+      startingRateBand: 5000,                 // verified gov.uk 2026-10-28
+      startingRate: 0,                        // verified gov.uk 2026-10-28
+      psaBasic: 1000,                         // verified gov.uk 2026-10-28
+      psaHigher: 500,                         // verified gov.uk 2026-10-28
+      psaAdditional: 0,                       // verified gov.uk 2026-10-28
+      basicRate: 0.20,                        // verified gov.uk 2026-10-28 (rises in 2027/28, below)
+      higherRate: 0.40,                       // verified gov.uk 2026-10-28 (rises in 2027/28, below)
+      additionalRate: 0.45,                   // verified gov.uk 2026-10-28 (rises in 2027/28, below)
+    },
+    dividends: {
+      allowance: 500,                         // verified gov.uk 2026-10-28
+      basicRate: 0.1075,                      // verified gov.uk 2026-10-28 (raised by 2pp from 6 Apr 2026)
+      higherRate: 0.3575,                     // verified gov.uk 2026-10-28 (raised by 2pp from 6 Apr 2026)
+      additionalRate: 0.3935,                 // verified gov.uk 2026-10-28
+    },
+    // Rent: the same rates as other income until 2027/28.
+    propertyIncome: { basicRate: 0.20, higherRate: 0.40, additionalRate: 0.45 },
+    ni: {
+      primaryThreshold: 12570,                // verified gov.uk 2026-10-28
+      upperEarningsLimit: 50270,              // verified gov.uk 2026-10-28
+      mainRate: 0.08,                         // verified gov.uk 2026-10-28
+      upperRate: 0.02,                        // verified gov.uk 2026-10-28
+      lowerEarningsLimit: 6708,               // verified gov.uk 2026-10-28 (£129 a week)
+    },
+    cgt: {
+      annualExempt: 3000,                     // verified gov.uk 2026-10-28
+      basicRate: 0.18,                        // verified gov.uk 2026-10-28
+      higherRate: 0.24,                       // verified gov.uk 2026-10-28
+    },
+    // The planned £12,000 cash ISA limit from April 2027 was reversed in the Autumn Budget 2026 (stays £20,000), so no cashIsaSubLimit.
+    isa: { annualAllowance: 20000 },          // verified gov.uk 2026-10-28
+    premiumBonds: { holdingLimit: 50000 },    // verified nsandi.com 2026-10-28
+    lisa: {
+      annualAllowance: 4000,                  // verified gov.uk 2026-10-28
+      bonusRate: 0.25,                        // verified gov.uk 2026-10-28
+      minAge: 18,                             // verified gov.uk 2026-10-28
+      maxOpenAge: 39,                         // verified gov.uk 2026-10-28
+      maxContributionAge: 50,                 // verified gov.uk 2026-10-28
+      penaltyFreeAge: 60,                     // verified gov.uk 2026-10-28
+    },
+    pension: {
+      annualAllowance: 60000,                 // verified gov.uk 2026-10-28
+      mpaa: 10000,                            // verified gov.uk 2026-10-28
+      taxFreeFraction: 0.25,                  // verified gov.uk 2026-10-28
+      lumpSumAllowance: 268275,               // verified gov.uk 2026-10-28
+      reliefAtSourceRate: 0.20,               // verified gov.uk 2026-10-28
+      basicAmount: 3600,                      // verified gov.uk 2026-10-28
+      taperThresholdIncome: 200000,           // verified gov.uk 2026-10-28
+      taperAdjustedIncome: 260000,            // verified gov.uk 2026-10-28
+      taperRate: 0.5,                         // verified gov.uk 2026-10-28
+      taperMinimumAllowance: 10000,           // verified gov.uk 2026-10-28
+    },
+  };
+}
 
 /**
  * Seed values for the UK rules and market assumptions.
@@ -7,70 +79,15 @@ import type { ConfigBundle } from '../config/configTypes';
  * To add a new tax year: add an entry under `tax`, then bump `defaultsVersion`.
  */
 export const DEFAULT_CONFIG: ConfigBundle = {
-  defaultsVersion: '2026-10-28',
+  defaultsVersion: '2026-10-29',
   tax: {
-    '2026/27': {
-      taxYear: '2026/27',
-      region: 'england-wales-ni',
-      personalAllowance: 12570,                 // verified gov.uk 2026-10-28
-      taperThreshold: 100000,                   // verified gov.uk 2026-10-28
-      taperRatePerPound: 0.5,                   // verified gov.uk 2026-10-28
-      incomeTaxBands: [
-        { upTo: 37700, rate: 0.20 },            // verified gov.uk 2026-10-28
-        { upTo: 125140, rate: 0.40 },           // verified gov.uk 2026-10-28
-        { upTo: null, rate: 0.45 },             // verified gov.uk 2026-10-28
-      ],
-      savings: {
-        startingRateBand: 5000,                 // verified gov.uk 2026-10-28
-        startingRate: 0,                        // verified gov.uk 2026-10-28
-        psaBasic: 1000,                         // verified gov.uk 2026-10-28
-        psaHigher: 500,                         // verified gov.uk 2026-10-28
-        psaAdditional: 0,                       // verified gov.uk 2026-10-28
-        basicRate: 0.20,                        // verified gov.uk 2026-10-28. From 6 Apr 2027: 22% (Budget 2025), +2pp more announced in Budget 2026
-        higherRate: 0.40,                       // verified gov.uk 2026-10-28. From 6 Apr 2027: 42% (Budget 2025), +2pp more announced in Budget 2026
-        additionalRate: 0.45,                   // verified gov.uk 2026-10-28. From 6 Apr 2027: 47% (Budget 2025), +2pp more announced in Budget 2026
-      },
-      dividends: {
-        allowance: 500,                         // verified gov.uk 2026-10-28
-        basicRate: 0.1075,                      // verified gov.uk 2026-10-28 (raised by 2pp from 6 Apr 2026)
-        higherRate: 0.3575,                     // verified gov.uk 2026-10-28 (raised by 2pp from 6 Apr 2026)
-        additionalRate: 0.3935,                 // verified gov.uk 2026-10-28
-      },
-      ni: {
-        primaryThreshold: 12570,                // verified gov.uk 2026-10-28
-        upperEarningsLimit: 50270,              // verified gov.uk 2026-10-28
-        mainRate: 0.08,                         // verified gov.uk 2026-10-28
-        upperRate: 0.02,                        // verified gov.uk 2026-10-28
-        lowerEarningsLimit: 6708,               // verified gov.uk 2026-10-28 (£129 a week)
-      },
-      cgt: {
-        annualExempt: 3000,                     // verified gov.uk 2026-10-28
-        basicRate: 0.18,                        // verified gov.uk 2026-10-28
-        higherRate: 0.24,                       // verified gov.uk 2026-10-28
-      },
-      // The planned £12,000 cash ISA limit from April 2027 was reversed in Budget 2026 (stays £20,000), so no cashIsaSubLimit.
-      isa: { annualAllowance: 20000 },          // verified gov.uk 2026-10-28
-      premiumBonds: { holdingLimit: 50000 },    // verified nsandi.com 2026-10-28
-      lisa: {
-        annualAllowance: 4000,                  // verified gov.uk 2026-10-28
-        bonusRate: 0.25,                        // verified gov.uk 2026-10-28
-        minAge: 18,                             // verified gov.uk 2026-10-28
-        maxOpenAge: 39,                         // verified gov.uk 2026-10-28
-        maxContributionAge: 50,                 // verified gov.uk 2026-10-28
-        penaltyFreeAge: 60,                     // verified gov.uk 2026-10-28
-      },
-      pension: {
-        annualAllowance: 60000,                 // verified gov.uk 2026-10-28
-        mpaa: 10000,                            // verified gov.uk 2026-10-28
-        taxFreeFraction: 0.25,                  // verified gov.uk 2026-10-28
-        lumpSumAllowance: 268275,               // verified gov.uk 2026-10-28
-        reliefAtSourceRate: 0.20,               // verified gov.uk 2026-10-28
-        basicAmount: 3600,                      // verified gov.uk 2026-10-28
-        taperThresholdIncome: 200000,           // verified gov.uk 2026-10-28
-        taperAdjustedIncome: 260000,            // verified gov.uk 2026-10-28
-        taperRate: 0.5,                         // verified gov.uk 2026-10-28
-        taperMinimumAllowance: 10000,           // verified gov.uk 2026-10-28
-      },
+    '2026/27': rules2026('2026/27'),
+    // Autumn Budget 2025 and 2026: from 6 April 2027 tax on savings interest and on rent rises to 24/44/49%
+    // (England, Wales and NI for rent). Checked against the Autumn Budget 2026 coverage 2026-10-29.
+    '2027/28': {
+      ...rules2026('2027/28'),
+      savings: { ...rules2026('2027/28').savings, basicRate: 0.24, higherRate: 0.44, additionalRate: 0.49 },
+      propertyIncome: { basicRate: 0.24, higherRate: 0.44, additionalRate: 0.49 },
     },
   },
   taxProjection: {
@@ -88,8 +105,11 @@ export const DEFAULT_CONFIG: ConfigBundle = {
     baseTaxYear: '2026/27',
     yearsForFull: 35,                           // verified gov.uk 2026-10-28
     minimumYears: 10,                           // verified gov.uk 2026-10-28
-    growth: 'tripleLock',
-    tripleLockFloorPct: 0.025,                  // verified gov.uk 2026-10-28; Budget 2026 adjusts the triple lock from April 2030
+    // From April 2030 the earnings link is dropped: the higher of inflation and 2.5% (announced by the
+    // Prime Minister 29 Sep 2026, to be legislated). Choose 'tripleLock' to keep the earnings link.
+    growth: 'adjustedTripleLock',
+    doubleLockFromTaxYear: '2030/31',
+    tripleLockFloorPct: 0.025,                  // verified gov.uk 2026-10-28
     fixedGrowthPct: 0.025,
     deferralIncreasePerYear: 0.0578,            // verified gov.uk 2026-10-28 (1% for every 9 weeks deferred)
     // verified against the gov.uk State Pension age timetable 2026-10-28 (Tables 4 and 5)
@@ -127,16 +147,18 @@ export const DEFAULT_CONFIG: ConfigBundle = {
   market: {
     equities: { meanReal: 0.05, vol: 0.16 },
     bonds: { meanReal: 0.015, vol: 0.06 },
-    cash: { meanReal: 0.005, vol: 0.01 },
+    // Cash rates lag inflation, so cash loses real value when inflation jumps (e.g. 2022).
+    cash: { meanReal: 0.005, vol: 0.02 },
     property: { meanReal: 0.02, vol: 0.12 },
     inflation: { mean: 0.025, vol: 0.015, floor: -0.02 },
-    // Placeholder values. Order: equities, bonds, cash, property, inflation.
+    // Correlations of real returns with each other and with inflation: judgement, not fitted to data.
+    // Order: equities, bonds, cash, property, inflation.
     correlations: [
       [1.00, 0.10, 0.00, 0.50, -0.10],
       [0.10, 1.00, 0.20, 0.20, -0.40],
-      [0.00, 0.20, 1.00, 0.00, -0.40],
+      [0.00, 0.20, 1.00, 0.00, -0.60],
       [0.50, 0.20, 0.00, 1.00, 0.20],
-      [-0.10, -0.40, -0.40, 0.20, 1.00],
+      [-0.10, -0.40, -0.60, 0.20, 1.00],
     ],
     defaultAnnualFeePct: { cash: 0, gia: 0.003, isa: 0.003, lisa: 0.003, dcPension: 0.004 },
     // NS&I prize fund rate from the September 2026 draw (variable). An average: a typical holder wins less.

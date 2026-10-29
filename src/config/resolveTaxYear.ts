@@ -8,6 +8,7 @@ function copyTaxYear(c: TaxYearConfig): TaxYearConfig {
     incomeTaxBands: c.incomeTaxBands.map((b) => ({ ...b })),
     savings: { ...c.savings },
     dividends: { ...c.dividends },
+    propertyIncome: { ...c.propertyIncome },
     ni: { ...c.ni },
     cgt: { ...c.cgt },
     isa: { ...c.isa },

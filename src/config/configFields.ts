@@ -15,6 +15,7 @@ const SRC = {
   incomeTax: GOV + 'income-tax-rates',
   savings: GOV + 'apply-tax-free-interest-on-savings',
   dividends: GOV + 'tax-on-dividends',
+  propertyIncome: GOV + 'government/publications/changes-to-tax-rates-for-property-savings-dividend-income',
   ni: GOV + 'national-insurance-rates-letters',
   cgt: GOV + 'capital-gains-tax',
   isa: GOV + 'individual-savings-accounts',
@@ -64,6 +65,9 @@ export const CONFIG_FIELDS: FieldMeta[] = [
   f(`${Y}.dividends.basicRate`, 'Dividend basic rate', 'pct', 'Savings & dividends', 'Tax on dividends falling in the basic rate band.', { ...RATE, sourceUrl: SRC.dividends }),
   f(`${Y}.dividends.higherRate`, 'Dividend higher rate', 'pct', 'Savings & dividends', 'Tax on dividends falling in the higher rate band.', { ...RATE, sourceUrl: SRC.dividends }),
   f(`${Y}.dividends.additionalRate`, 'Dividend additional rate', 'pct', 'Savings & dividends', 'Tax on dividends falling in the additional rate band.', { ...RATE, sourceUrl: SRC.dividends }),
+  f(`${Y}.propertyIncome.basicRate`, 'Rental income basic rate', 'pct', 'Savings & dividends', 'Tax on rental income in the basic rate band (England, Wales and NI). Rent is taxed after other non-savings income.', { ...RATE, sourceUrl: SRC.propertyIncome }),
+  f(`${Y}.propertyIncome.higherRate`, 'Rental income higher rate', 'pct', 'Savings & dividends', 'Tax on rental income in the higher rate band.', { ...RATE, sourceUrl: SRC.propertyIncome }),
+  f(`${Y}.propertyIncome.additionalRate`, 'Rental income additional rate', 'pct', 'Savings & dividends', 'Tax on rental income in the additional rate band.', { ...RATE, sourceUrl: SRC.propertyIncome }),
 
   // NI
   f(`${Y}.ni.primaryThreshold`, 'Primary threshold', 'gbp', 'National Insurance', 'Employee NI is paid on earnings above this.', { ...GBP, sourceUrl: SRC.ni }),
@@ -108,7 +112,8 @@ export const CONFIG_FIELDS: FieldMeta[] = [
   f('statePension.baseTaxYear', 'Base tax year', 'date', 'State Pension', 'Tax year the weekly rate applies to.', { readOnly: true, sourceUrl: SRC.statePension }),
   f('statePension.yearsForFull', 'Qualifying years for full pension', 'years', 'State Pension', 'National Insurance qualifying years needed for the full amount.', { min: 1, max: 60, step: 1, sourceUrl: SRC.statePension }),
   f('statePension.minimumYears', 'Minimum qualifying years', 'years', 'State Pension', 'Fewer qualifying years than this gives no State Pension.', { min: 0, max: 60, step: 1, sourceUrl: SRC.statePension }),
-  f('statePension.growth', 'Annual increase rule', 'enum', 'State Pension', 'Triple lock: the highest of inflation, earnings growth and the floor. Or follow inflation, earnings, or a fixed rate.', { options: ['tripleLock', 'inflation', 'earnings', 'fixed'], sourceUrl: SRC.statePension }),
+  f('statePension.growth', 'Annual increase rule', 'enum', 'State Pension', 'Triple lock: the highest of inflation, earnings growth and the floor. Adjusted triple lock: the same until the year below, then the higher of inflation and the floor (announced for April 2030, not yet law). Or follow inflation, earnings, or a fixed rate.', { options: ['adjustedTripleLock', 'tripleLock', 'inflation', 'earnings', 'fixed'], sourceUrl: SRC.statePension }),
+  f('statePension.doubleLockFromTaxYear', 'Earnings link ends from', 'date', 'State Pension', 'With the adjusted triple lock: the first tax year whose increase ignores earnings growth.', { sourceUrl: SRC.statePension }),
   f('statePension.tripleLockFloorPct', 'Triple lock floor', 'pct', 'State Pension', 'Minimum annual increase under the triple lock.', { ...RATE, sourceUrl: SRC.statePension }),
   f('statePension.deferralIncreasePerYear', 'Deferral increase per year', 'pct', 'State Pension', 'Extra State Pension for each year you put off claiming it after State Pension age (1% for every 9 weeks is about 5.78% a year).', { min: 0, max: 1, step: 0.0001, sourceUrl: GOV + 'deferring-state-pension' }),
   f('statePension.fixedGrowthPct', 'Fixed annual increase', 'pct', 'State Pension', 'Used only when the increase rule is "fixed".', { min: -1, max: 1, step: 0.0001, sourceUrl: SRC.statePension }),

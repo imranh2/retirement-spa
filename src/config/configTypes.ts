@@ -12,6 +12,7 @@ export interface TaxYearConfig {
              psaBasic: number; psaHigher: number; psaAdditional: number;
              basicRate: number; higherRate: number; additionalRate: number };   // rates on savings interest by band
   dividends: { allowance: number; basicRate: number; higherRate: number; additionalRate: number };
+  propertyIncome: { basicRate: number; higherRate: number; additionalRate: number };   // rates on rent, by band
   ni: { primaryThreshold: number; upperEarningsLimit: number; mainRate: number; upperRate: number;
         lowerEarningsLimit: number };                  // earnings at or above this make the year count for the State Pension
   cgt: { annualExempt: number; basicRate: number; higherRate: number };
@@ -71,7 +72,8 @@ export interface ConfigBundle {
     baseTaxYear: string;
     yearsForFull: number;
     minimumYears: number;
-    growth: 'tripleLock' | 'inflation' | 'earnings' | 'fixed';
+    growth: 'tripleLock' | 'adjustedTripleLock' | 'inflation' | 'earnings' | 'fixed';
+    doubleLockFromTaxYear: string;     // adjustedTripleLock: from this tax year the earnings leg is dropped
     tripleLockFloorPct: number;
     fixedGrowthPct: number;
     deferralIncreasePerYear: number;   // extra State Pension per year of deferral, as a fraction of the entitlement

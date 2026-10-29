@@ -1,6 +1,7 @@
 import type { Person } from '../model/types';
 import type { ConfigBundle, StatePensionConfig } from '../config/configTypes';
 import { defaultStatePensionStartAge, statePensionAge } from '../model/ageRules';
+import { taxYearStartYear } from '../model/dates';
 
 import { WEEKS_PER_YEAR } from './constants';
 
@@ -52,16 +53,20 @@ export function qualifyingYearsAtStart(person: Person, currentAge: number, start
 }
 
 /**
- * State Pension increase for one year given that year's simulated inflation.
- * tripleLock = max(inflation, earnings growth, floor).
+ * State Pension increase applied at the start of the tax year beginning in `taxYearStart`,
+ * given the simulated inflation. tripleLock = max(inflation, earnings growth, floor);
+ * adjustedTripleLock drops the earnings leg from `doubleLockFromTaxYear`.
  */
-export function statePensionGrowth(inflation: number, config: Pick<ConfigBundle, 'statePension' | 'market'>): number {
+export function statePensionGrowth(inflation: number, config: Pick<ConfigBundle, 'statePension' | 'market'>, taxYearStart: number): number {
   const sp = config.statePension;
   const earnings = (1 + config.market.wageGrowthRealPct) * (1 + inflation) - 1;
   switch (sp.growth) {
     case 'inflation': return inflation;
     case 'earnings': return earnings;
     case 'tripleLock': return Math.max(inflation, earnings, sp.tripleLockFloorPct);
+    case 'adjustedTripleLock': return taxYearStart >= taxYearStartYear(sp.doubleLockFromTaxYear)
+      ? Math.max(inflation, sp.tripleLockFloorPct)
+      : Math.max(inflation, earnings, sp.tripleLockFloorPct);
     case 'fixed': return sp.fixedGrowthPct;
   }
 }

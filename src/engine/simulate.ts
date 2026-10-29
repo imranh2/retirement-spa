@@ -116,7 +116,11 @@ function prepare(scenario: Scenario, config: ConfigBundle): Prepared {
   const sp = config.statePension;
   const yearsFromBase = Math.max(0, startYear - taxYearStartYear(sp.baseTaxYear));
   // Bring the base-year rate to the start year with mean assumptions, then express it in today's money.
-  const baseToToday = Math.pow((1 + statePensionGrowth(config.market.inflation.mean, config)) / (1 + config.market.inflation.mean), yearsFromBase);
+  let baseToToday = 1;
+  for (let k = 1; k <= yearsFromBase; k++) {
+    const y = taxYearStartYear(sp.baseTaxYear) + k;
+    baseToToday *= (1 + statePensionGrowth(config.market.inflation.mean, config, y)) / (1 + config.market.inflation.mean);
+  }
   const spStartAge = people.map((p) => statePensionStartAge(p, config));
   // State Pension age in whole years (ignoring deferral): NI stops and qualifying years stop accruing here.
   const niEndAge = people.map((p) => defaultStatePensionStartAge(p.dateOfBirth, sp.ageSchedule));
@@ -163,6 +167,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     : deterministic ? Array.from({ length: T }, () => deterministicReturns(market)) : generateReturns(returnInput);
   const monthlyReturns = monthly ? generateMonthlyReturnsPacked(returnInput) : new Float64Array(0);
   const mr: YearReturns = { equities: 0, bonds: 0, cash: 0, property: 0, inflation: 0 };
+  const firstTaxYear = taxYearStartYear(prep.labels[0]);
   const monthlyFee = accounts.map((a) => 1 - Math.pow(1 - a.annualFeePct, 1 / MONTHS_PER_YEAR));
   /** Flat fees come out of the balance after returns, never taking it below zero. */
   const fixedFee = accounts.map((a) => a.annualFeeFixed ?? 0);
@@ -346,7 +351,8 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     let niTotal = 0;
     for (let i = 0; i < nP; i++) {
       const income: TaxableIncome = {
-        nonSavings: Math.max(0, salary[i] - plan.netPayGross[i]) + statePension[i] + taxableStreams[i] + rentShare,
+        nonSavings: Math.max(0, salary[i] - plan.netPayGross[i]) + statePension[i] + taxableStreams[i],
+        property: rentShare,
         ...investmentIncome(i, (a) => balances[a]),
       };
       incomes.push(income);
@@ -560,7 +566,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     }
     if (failed) return { failedAtAge: age0, flags };
 
-    spIndex *= 1 + statePensionGrowth(yearInflation, config);
+    spIndex *= 1 + statePensionGrowth(yearInflation, config, firstTaxYear + t + 1);   // the increase for next tax year
     prevInflation = yearInflation;
     lastCash = yearCash;
     index = indexEnd;

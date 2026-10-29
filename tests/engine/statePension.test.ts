@@ -42,8 +42,14 @@ describe('State Pension age', () => {
     expect(qualifyingYearsAtStart(person('1980-01-01', { salary: 30000, retirementAge: 50, niCreditsUntilAge: 52 }), 46, 68, sp, 6708)).toBe(26);
   });
   it('triple lock is the max of inflation, earnings and floor', () => {
-    expect(statePensionGrowth(0.01, TEST_CONFIG)).toBeCloseTo(0.025, 12);
-    expect(statePensionGrowth(0.05, TEST_CONFIG)).toBeCloseTo(1.01 * 1.05 - 1, 12);
+    expect(statePensionGrowth(0.01, TEST_CONFIG, 2027)).toBeCloseTo(0.025, 12);
+    expect(statePensionGrowth(0.05, TEST_CONFIG, 2027)).toBeCloseTo(1.01 * 1.05 - 1, 12);
+  });
+  it('the adjusted triple lock drops the earnings leg from its start year', () => {
+    const cfg = { ...TEST_CONFIG, statePension: { ...TEST_CONFIG.statePension, growth: 'adjustedTripleLock' as const, doubleLockFromTaxYear: '2030/31' } };
+    expect(statePensionGrowth(0.03, cfg, 2029)).toBeCloseTo(1.01 * 1.03 - 1, 12);   // 2029/30: still the triple lock
+    expect(statePensionGrowth(0.03, cfg, 2030)).toBeCloseTo(0.03, 12);              // 2030/31: inflation
+    expect(statePensionGrowth(0.01, cfg, 2030)).toBeCloseTo(0.025, 12);             // ...or the 2.5% floor
   });
 });
 

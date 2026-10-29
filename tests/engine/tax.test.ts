@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { calculateIncomeTax, calculateNI, calculateCGT } from '../../src/engine/tax';
 import { TEST_CONFIG } from '../fixtures/testConfig';
+import { DEFAULT_CONFIG } from '../../src/defaults/ukDefaults';
 
 const cfg = TEST_CONFIG.tax['2026/27'];
 const tax = (nonSavings: number, savings = 0, dividends = 0) => calculateIncomeTax({ nonSavings, savings, dividends }, cfg);
@@ -78,5 +79,30 @@ describe('nothing hardcoded', () => {
     expect(calculateIncomeTax({ nonSavings: 50000, savings: 0, dividends: 0 }, c).total).toBeCloseTo(35000 * 0.25, 6);
     c.ni.mainRate = 0.1;
     expect(calculateNI(50000, c)).toBeCloseTo((50000 - 12570) * 0.1, 6);
+  });
+});
+
+describe('2027/28 rates on savings and rent (Autumn Budgets 2025 and 2026)', () => {
+  const y26 = DEFAULT_CONFIG.tax['2026/27'];
+  const y27 = DEFAULT_CONFIG.tax['2027/28'];
+  it('rent is taxed like other income in 2026/27', () => {
+    const asRent = calculateIncomeTax({ nonSavings: 20_000, savings: 0, dividends: 0, property: 10_000 }, y26).total;
+    const asOther = calculateIncomeTax({ nonSavings: 30_000, savings: 0, dividends: 0 }, y26).total;
+    expect(asRent).toBeCloseTo(asOther, 6);
+  });
+  it('rent above other income is taxed at 24% in the basic band from 2027/28', () => {
+    // £20k salary uses the personal allowance; £10k rent sits in the basic band at 24%.
+    const r = calculateIncomeTax({ nonSavings: 20_000, savings: 0, dividends: 0, property: 10_000 }, y27);
+    expect(r.total).toBeCloseTo((20_000 - 12_570) * 0.20 + 10_000 * 0.24, 6);
+  });
+  it('the personal allowance covers other income before rent', () => {
+    // £5k pension and £10k rent: the allowance covers the £5k, then £7,570 of the rent.
+    const r = calculateIncomeTax({ nonSavings: 5_000, savings: 0, dividends: 0, property: 10_000 }, y27);
+    expect(r.total).toBeCloseTo((15_000 - 12_570) * 0.24, 6);
+  });
+  it('savings interest above the allowances is taxed at 24% / 44% from 2027/28', () => {
+    // £30k salary: £17,430 taxable, so no starting rate; £1,000 PSA; £4,000 interest at 24%.
+    const r = calculateIncomeTax({ nonSavings: 30_000, savings: 5_000, dividends: 0 }, y27);
+    expect(r.savingsTax).toBeCloseTo(4_000 * 0.24, 6);
   });
 });

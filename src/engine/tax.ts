@@ -1,6 +1,7 @@
 import type { Band, TaxYearConfig } from '../config/configTypes';
 
-export interface TaxableIncome { nonSavings: number; savings: number; dividends: number }
+/** `property` (rent) is non-savings income taxed at the property rates, after other non-savings income. */
+export interface TaxableIncome { nonSavings: number; savings: number; dividends: number; property?: number }
 
 export interface TaxResult {
   total: number;
@@ -67,6 +68,7 @@ export function personalAllowanceAfterTaper(adjustedIncome: number, cfg: TaxYear
  */
 export function calculateIncomeTax(income: TaxableIncome, cfg: TaxYearConfig, opts: TaxOptions = {}): TaxResult {
   const ns = Math.max(0, income.nonSavings);
+  const prop = Math.max(0, income.property ?? 0);
   const sav = Math.max(0, income.savings);
   const div = Math.max(0, income.dividends);
   const tops = bandTops(cfg.incomeTaxBands, opts.basicBandExtension ?? 0);
@@ -75,15 +77,22 @@ export function calculateIncomeTax(income: TaxableIncome, cfg: TaxYearConfig, op
 
   // Adjusted net income for the taper is reduced by gross relief-at-source pension contributions
   // (the same amount that extends the basic band).
-  const pa = personalAllowanceAfterTaper(Math.max(0, ns + sav + div - (opts.basicBandExtension ?? 0)), cfg);
+  const pa = personalAllowanceAfterTaper(Math.max(0, ns + prop + sav + div - (opts.basicBandExtension ?? 0)), cfg);
   let paLeft = pa;
-  const nsTaxable = Math.max(0, ns - paLeft); paLeft = Math.max(0, paLeft - ns);
+  // The personal allowance goes against other non-savings income first, then property, savings, dividends.
+  const otherTaxable = Math.max(0, ns - paLeft); paLeft = Math.max(0, paLeft - ns);
+  const propTaxable = Math.max(0, prop - paLeft); paLeft = Math.max(0, paLeft - prop);
+  const nsTaxable = otherTaxable + propTaxable;
   const savTaxable = Math.max(0, sav - paLeft); paLeft = Math.max(0, paLeft - sav);
   const divTaxable = Math.max(0, div - paLeft); paLeft = Math.max(0, paLeft - div);
   const totalTaxable = nsTaxable + savTaxable + divTaxable;
 
-  // Non-savings
-  const incomeTax = taxThroughBands(nsTaxable, 0, tops, (i) => rates[i]);
+  // Non-savings: other income at the main rates, then property income at the property rates
+  const propRate = (i: number) => {
+    const name = bandName(i, n);
+    return name === 'basic' ? cfg.propertyIncome.basicRate : name === 'higher' ? cfg.propertyIncome.higherRate : cfg.propertyIncome.additionalRate;
+  };
+  const incomeTax = taxThroughBands(otherTaxable, 0, tops, (i) => rates[i]) + taxThroughBands(propTaxable, otherTaxable, tops, propRate);
   let pos = nsTaxable;
 
   // Savings: starting rate band, then PSA (both 0%-ish but use band space), then band rates

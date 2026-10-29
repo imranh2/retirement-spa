@@ -141,6 +141,18 @@ describe('defaults updates', () => {
     expect(b.getDefaultsUpdateDiff()).toEqual([]);
     expect(b.getState().config.defaultsVersion).toBe('2027-04-06');
   });
+  it('accepting a changed correlation updates both halves, so the matrix stays symmetric', () => {
+    const a = new Store({ autoRun: false });
+    a.saveNow();
+    const newer = structuredClone(DEFAULT_CONFIG);
+    newer.defaultsVersion = '2027-04-06';
+    newer.market.correlations[0][1] = 0.3;
+    newer.market.correlations[1][0] = 0.3;
+    const b = new Store({ defaults: newer, autoRun: false });
+    b.acceptDefault('market.correlations[0][1]');
+    expect(b.getState().config.market.correlations[1][0]).toBe(0.3);
+    expect(b.getDefaultsUpdateDiff()).toEqual([]);
+  });
 });
 
 describe('config actions', () => {
@@ -159,9 +171,12 @@ describe('config actions', () => {
   });
   it('add and remove tax years; the last year cannot be removed', () => {
     const s = new Store({ autoRun: false });
+    // The defaults define 2026/27 and 2027/28, so the next year is 2028/29.
     const y = s.addTaxYear('2026/27');
-    expect(y).toBe('2027/28');
-    expect(s.getState().config.tax[y].taxYear).toBe('2027/28');
+    expect(y).toBe('2028/29');
+    expect(s.getState().config.tax[y].taxYear).toBe('2028/29');
+    expect(s.getState().config.tax[y].savings.basicRate).toBe(s.getState().config.tax['2026/27'].savings.basicRate);
+    expect(s.removeTaxYear('2028/29')).toBe(true);
     expect(s.removeTaxYear('2027/28')).toBe(true);
     expect(s.removeTaxYear('2026/27')).toBe(false);
   });

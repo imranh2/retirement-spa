@@ -374,7 +374,7 @@ function accountFields(c: TabCtx, a: Account, i: number): Node[] {
   if (a.type === 'lisa') {
     const l = c.store.getState().config.tax[Object.keys(c.store.getState().config.tax).sort().slice(-1)[0]]?.lisa;
     fields.push(h('p', { class: 'muted full' }, l
-      ? `LISA money is treated as locked until ${l.penaltyFreeAge}. You can pay in from ${l.minAge} until ${l.maxContributionAge}, and a LISA must be opened by ${l.maxOpenAge}: a LISA with a £0 balance is opened by its first payment, so payments into it that start after ${l.maxOpenAge} go to a GIA or cash instead.`
+      ? `LISA money is treated as locked until ${l.penaltyFreeAge}. You can pay in from ${l.minAge} until ${l.maxContributionAge}, and a LISA must be opened by ${l.maxOpenAge}: a LISA with a £0 balance is opened by its first payment, so payments into it that start after ${l.maxOpenAge} go to a GIA or cash instead. New LISAs close to new savers from April 2029 (replaced by a First Time Buyer ISA), which the model does not enforce; existing LISAs carry on.`
       : 'LISA money is treated as locked until the penalty-free age.'));
   }
   return fields;
@@ -506,7 +506,7 @@ function propertyFields(c: TabCtx, p: Property, i: number): Node[] {
     numberField({ label: 'Growth above inflation', unit: 'pct', step: 0.001, value: p.growthRealPct, errorPath: `${pre}.growthRealPct`, help: 'Replaces the market property return for this home; the year-to-year volatility still applies.', onChange: (v) => setS(c, `${pre}.growthRealPct`, v ?? 0) }),
     numberField({ label: 'Running costs per year', unit: 'gbp', min: 0, step: 100, value: p.runningCostsAnnual, errorPath: `${pre}.runningCostsAnnual`, help: 'Fixed costs such as insurance, council tax or service charges, in today’s money.', onChange: (v) => setS(c, `${pre}.runningCostsAnnual`, v ?? 0) }),
     numberField({ label: 'Plus % of home value per year', unit: 'pct', nullable: true, min: 0, max: 0.1, step: 0.001, value: p.runningCostsPctOfValue, placeholder: 'none', errorPath: `${pre}.runningCostsPctOfValue`, help: 'Costs that grow with the home’s value, such as maintenance (often 1% a year). Added to the fixed amount.', onChange: (v) => setS(c, `${pre}.runningCostsPctOfValue`, v ?? undefined) }),
-    numberField({ label: 'Rental income per year', unit: 'gbp', nullable: true, min: 0, step: 100, value: p.rentalIncomeAnnual, placeholder: 'not let', errorPath: `${pre}.rentalIncomeAnnual`, help: 'Taxable income, split equally between the people.', onChange: (v) => setS(c, `${pre}.rentalIncomeAnnual`, v ?? undefined) }),
+    numberField({ label: 'Rental income per year', unit: 'gbp', nullable: true, min: 0, step: 100, value: p.rentalIncomeAnnual, placeholder: 'not let', errorPath: `${pre}.rentalIncomeAnnual`, help: 'Taxable income, split equally between the people. From April 2027 rent is taxed at its own, higher rates (Rules & Assumptions → Savings & dividends).', onChange: (v) => setS(c, `${pre}.rentalIncomeAnnual`, v ?? undefined) }),
     checkboxField({ label: 'Main residence', checked: p.isMainResidence, errorPath: `${pre}.isMainResidence`, help: 'Only the main residence can be downsized. Its sale is free of CGT.', onChange: (v) => { setS(c, `${pre}.isMainResidence`, v); c.rerender(); } }),
   ];
   const m = p.mortgage;

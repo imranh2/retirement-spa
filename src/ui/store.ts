@@ -19,6 +19,12 @@ export const STORAGE_KEYS = {
   welcomed: 'ukplanner.welcomed.v1',       // the welcome notice was dismissed
 } as const;
 
+/** A correlation's path and its mirror (the matrix is kept symmetric); any other path alone. */
+function withMirror(path: string): string[] {
+  const m = /^market\.correlations\[(\d+)\]\[(\d+)\]$/.exec(path);
+  return m && m[1] !== m[2] ? [path, `market.correlations[${m[2]}][${m[1]}]`] : [path];
+}
+
 export const SAVE_DEBOUNCE_MS = 400;
 export const RUN_DEBOUNCE_MS = 500;
 
@@ -366,16 +372,19 @@ export class Store {
       .map((c) => ({ path: c.path, yours: getPath(this.state.config, c.path), oldDefault: c.oldValue, newDefault: c.newValue }));
   }
 
-  /** Take the new default for one changed field. */
+  /** Take the new default for one changed field (both halves of a correlation). */
   acceptDefault(path: string): void {
-    this.base = setPath(this.base, path, structuredClone(getPath(this.defaults, path)));
-    const config = setPath(this.state.config, path, structuredClone(getPath(this.defaults, path)));
+    let config = this.state.config;
+    for (const p of withMirror(path)) {
+      this.base = setPath(this.base, p, structuredClone(getPath(this.defaults, p)));
+      config = setPath(config, p, structuredClone(getPath(this.defaults, p)));
+    }
     this.set({ config: this.markDefaultsCurrent(config) }, { persist: true, rerun: true });
   }
 
   /** Keep the user's value for one changed field (the prompt for it goes away). */
   keepMine(path: string): void {
-    this.base = setPath(this.base, path, structuredClone(getPath(this.defaults, path)));
+    for (const p of withMirror(path)) this.base = setPath(this.base, p, structuredClone(getPath(this.defaults, p)));
     this.set({ config: this.markDefaultsCurrent(this.state.config) }, { persist: true });
   }
 
