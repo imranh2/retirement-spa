@@ -41,7 +41,9 @@ const SHORTFALL_NOTE_GBP = 500;
 export function workingShortfall(r: SimulationResult): { perYear: number; years: number } | null {
   const rows = r.centralCase.filter((row) => row.salary > 0);
   if (rows.length === 0) return null;
-  const drawn = rows.map((row) => row.drawCash + row.drawGia + row.drawIsa + row.drawLisa + row.drawPension + (row.drawPremiumBonds ?? 0));
+  // Regular overspending only: one-off costs and buying a home are big planned draws, not a yearly gap.
+  const drawn = rows.map((row) => row.drawCash + row.drawGia + row.drawIsa + row.drawLisa + row.drawPension + (row.drawPremiumBonds ?? 0)
+    - (row.oneOffCosts ?? 0) - (row.homePurchase ?? 0));
   const short = drawn.filter((d) => d > 0);
   if (short.length === 0) return null;
   const perYear = short.reduce((a, b) => a + b, 0) / short.length;
@@ -52,7 +54,22 @@ export function workingShortfall(r: SimulationResult): { perYear: number; years:
 export function shortfallText(r: SimulationResult): string | null {
   const w = workingShortfall(r);
   if (!w) return null;
-  return `While working, you spend about ${formatMoney(Math.round(w.perYear / 100) * 100)} a year more than you take home (living costs, mortgage, home costs and saving together), so savings cover the gap${w.years > 1 ? ` in ${w.years} years` : ''}. See Results → Year by year.`;
+  return `While working, you spend about ${formatMoney(Math.round(w.perYear / 100) * 100)} a year more than you take home (living costs, rent or mortgage, home costs and saving together), so savings cover the gap in ${w.years === 1 ? 'one year' : `${w.years} of the years`}. See Results → Year by year.`;
+}
+
+/** The lowest spending level the max-spend search tries (a tenth of the plan). */
+const MAX_SPEND_FLOOR = 0.1;
+
+/**
+ * If the money runs out in the year a home is bought (central case), say what the purchase needs:
+ * an unaffordable deposit is a common cause of a plan failing early.
+ */
+export function purchaseText(r: SimulationResult, s: Scenario): string | null {
+  const rows = r.centralCase;
+  const last = rows[rows.length - 1];
+  if (!last || !(last.homePurchase && last.homePurchase > 0) || last.age >= s.sim.horizonAge - 1) return null;
+  const home = s.properties.find((p) => p.buyAtAge === last.age);
+  return `Buying ${home?.name || 'the home'} at ${last.age} needs about ${formatMoney(Math.round(last.homePurchase / 100) * 100)} from savings (deposit, stamp duty and fees, today’s money), and with average returns the money runs out that year. Try a smaller deposit, a later age or a lower price.`;
 }
 
 /** Below this relative gap between planned and max spend, say the plan is "about right". */
@@ -68,6 +85,11 @@ export function verdictText(r: SimulationResult, s: Scenario, maxSpend?: MaxSpen
   const lead = s.people.length > 1 ? `chance your money lasts until ${who} is ${s.sim.horizonAge}` : `chance your money lasts to age ${s.sim.horizonAge}`;
   if (!maxSpend || maxSpend.multiplier <= 0) return { lead };
   const target = `${Math.round(maxSpend.targetSuccessRate * 100)}%`;
+  // At the search's lowest level even a tenth of planned spending falls short: living costs are not the problem.
+  if (maxSpend.multiplier <= MAX_SPEND_FLOOR + 1e-9 && maxSpend.warnings.length > 0) {
+    const extra = costsOnTop(s);
+    return { lead, spend: `Even cutting living costs to a tenth does not reach a ${target} chance${extra ? `: your ${extra}, or the income to pay them, need to change` : ': income or savings need to change'}.` };
+  }
   const planned = maxSpend.annualSpendReal / maxSpend.multiplier;
   const gap = maxSpend.multiplier - 1;
   const extra = costsOnTop(s);
@@ -142,8 +164,10 @@ export function verdictBlock(r: SimulationResult, s: Scenario, maxSpend: MaxSpen
       v.spend && (s.spending.length > 1 || s.strategy.kind !== 'fixedReal')
         ? h('p', { class: 'muted small' }, `That figure is your spending now. It assumes ${s.spending.length > 1 ? 'every phase of your spending plan scales by the same amount and is ' : ''}spent as a fixed amount rising with inflation, whatever withdrawal strategy you chose.`)
         : null,
-      ...(maxSpend?.warnings ?? []).map((w) => h('p', { class: 'warning small' }, w)),
+      // The floor case is already said in the lead sentence; other search notes (e.g. annual steps) are shown.
+      ...(maxSpend && maxSpend.multiplier <= MAX_SPEND_FLOOR + 1e-9 ? [] : maxSpend?.warnings ?? []).map((w) => h('p', { class: 'warning small' }, w)),
       shortfallText(r) ? h('p', { class: 'warning small' }, shortfallText(r)) : null,
+      purchaseText(r, s) ? h('p', { class: 'warning small' }, purchaseText(r, s)) : null,
       s.strategy.kind !== 'fixedReal' ? h('p', { class: 'small' }, flexibleSpendingText(r)) : null,
       h('p', { class: 'muted small' }, `A future counts as a success if ${whatMustBePaid(s)} are paid in full every year until age ${s.sim.horizonAge}. Spare income while working is ${surplusDescription(s)}. Based on ${r.runs.toLocaleString('en-GB')} simulated futures. All amounts are in today’s money.`)));
 }

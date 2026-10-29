@@ -27,13 +27,14 @@ export function startApp(root: HTMLElement): Store {
     ...TABS.map((t) => h('option', { value: t.id }, t.label)));
   const navMenu = h('div', { class: 'tab-menu' }, h('span', { class: 'muted small', 'aria-hidden': 'true' }, 'Go to'), navSelect);
 
+  const confirmImport = () => window.confirm('Importing a file replaces your current plan and rules. Export first if you want to keep them. Continue?');
   const fileInput = h('input', { type: 'file', accept: 'application/json,.json', class: 'sr-only', id: 'import-file', 'aria-label': 'Import a saved plan (JSON)' });
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
     fileInput.value = '';
     if (!file) return;
     const res = store.importJson(await file.text());
-    if (res.ok) { toast(`Imported ${file.name}.`); rerender(); }
+    if (res.ok) { store.dismissNotice('import'); toast(`Imported ${file.name}.`); rerender(); }
     else store.addNotice({ id: 'import', kind: 'error', text: `Could not import ${file.name}: ${res.errors.slice(0, 6).join(' · ')}${res.errors.length > 6 ? ` (+${res.errors.length - 6} more)` : ''}` });
   });
 
@@ -42,7 +43,10 @@ export function startApp(root: HTMLElement): Store {
     h('div', { class: 'header-actions' },
       h('a', { href: '#/overview/quickstart', class: 'btn ghost' }, 'New plan'),
       h('button', { type: 'button', class: 'btn', title: 'Save your scenario and rules as a JSON file', onclick: () => { downloadText(`ukplanner-${store.getState().scenario.sim.startDate}.json`, 'application/json', store.exportJson()); } }, 'Export'),
-      h('label', { for: 'import-file', class: 'btn', tabindex: 0, title: 'Load a JSON file saved with Export', onkeydown: (e: Event) => { const k = (e as KeyboardEvent).key; if (k === 'Enter' || k === ' ') { e.preventDefault(); fileInput.click(); } } }, 'Import'),
+      h('label', { for: 'import-file', class: 'btn', tabindex: 0, title: 'Load a JSON file saved with Export',
+        // Importing replaces the current plan, so ask first (as loading an example or the quick start does).
+        onclick: (e: Event) => { if (!confirmImport()) e.preventDefault(); },
+        onkeydown: (e: Event) => { const k = (e as KeyboardEvent).key; if (k === 'Enter' || k === ' ') { e.preventDefault(); if (confirmImport()) fileInput.click(); } } }, 'Import'),
       fileInput));
 
   // Not a live region itself: it is rebuilt on every progress tick. `announce` speaks only finished results.
@@ -105,7 +109,7 @@ export function startApp(root: HTMLElement): Store {
         : h('p', { class: 'muted sum-empty' }, s.status === 'invalid' ? 'Fix the problems below to see results.' : 'Working out your results…'),
       r ? h('dl', { class: 'sum-stats' },
         h('div', {}, h('dt', { title: `The most you could spend a year on living costs and still hit your target success rate.${costsOnTop(s.scenario) ? ` Your ${costsOnTop(s.scenario)} are paid on top.` : ''}` }, `Max spend at ${Math.round(s.scenario.sim.targetSuccessRate * 100)}% success${costsOnTop(s.scenario) ? ' (living costs only)' : ''}`),
-          h('dd', {}, s.maxSpend ? [`${formatMoney(s.maxSpend.annualSpendReal)}/yr`, deltaTag(delta.maxSpend, formatMoney, MIN_GBP)] : h('span', { class: 'muted' }, s.maxSpendProgress ? `working… ${s.maxSpendProgress.completed}/${s.maxSpendProgress.total}` : '—'))),
+          h('dd', {}, s.maxSpend ? [`${formatMoney(s.maxSpend.annualSpendReal)}/yr`, deltaTag(delta.maxSpend, formatMoney, MIN_GBP)] : h('span', { class: 'muted' }, s.maxSpendProgress ? 'working…' : '—'))),
         working ? h('div', {}, h('dt', {}, 'Earliest stop-work age'), h('dd', {}, retireText ?? h('span', { class: 'muted' }, s.status === 'done' ? 'working…' : '—'))) : null,
         h('div', {}, h('dt', { title: 'Savings and investments, not property' }, `Median portfolio at ${horizon}`), h('dd', {}, lastMedian !== undefined ? formatMoneyCompact(lastMedian) : '—')),
         h('div', {}, h('dt', { title: 'Income tax, NI and CGT over the whole plan' }, 'Lifetime tax and NI (median)'), h('dd', {}, formatMoney(r.taxPaidTotal.median)))) : null,

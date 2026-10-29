@@ -99,6 +99,7 @@ export const CONFIG_FIELDS: FieldMeta[] = [
   f(`${Y}.stampDuty.ftbNilBand`, 'First-time buyers: 0% up to', 'gbp', 'Stamp duty', 'First-time buyer relief: no stamp duty on the price up to this.', { ...GBP, sourceUrl: SRC.stampDutyFtb }),
   f(`${Y}.stampDuty.ftbRate`, 'First-time buyers: rate above that', 'pct', 'Stamp duty', 'Rate on the part of the price above the first-time buyer 0% band.', { ...RATE, sourceUrl: SRC.stampDutyFtb }),
   f(`${Y}.stampDuty.ftbMaxPrice`, 'First-time buyer relief: price limit', 'gbp', 'Stamp duty', 'Above this price there is no first-time buyer relief: the normal rates apply.', { ...GBP, sourceUrl: SRC.stampDutyFtb }),
+  f(`${Y}.stampDuty.surchargeRate`, 'Additional home surcharge', 'pct', 'Stamp duty', 'Extra stamp duty on the whole price when you buy a home while owning another (e.g. a buy-to-let or second home). No first-time buyer relief then.', { ...RATE, sourceUrl: SRC.stampDuty }),
   f(`${Y}.lisa.annualAllowance`, 'LISA annual allowance', 'gbp', 'ISA & LISA', 'Maximum paid into a Lifetime ISA each tax year (counts towards the ISA allowance).', { ...GBP, sourceUrl: SRC.lisa }),
   f(`${Y}.lisa.bonusRate`, 'LISA bonus rate', 'pct', 'ISA & LISA', 'Government bonus added to each LISA contribution.', { ...RATE, sourceUrl: SRC.lisa }),
   f(`${Y}.lisa.minAge`, 'LISA minimum age', 'age', 'ISA & LISA', 'You must be at least this age to open or pay into a LISA.', { min: 0, max: 120, step: 1, sourceUrl: SRC.lisa }),

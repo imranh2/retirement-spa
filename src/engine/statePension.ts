@@ -41,10 +41,12 @@ export function annualEntitlement(qualifyingYears: number, sp: StatePensionConfi
  * retirementAge) and earns at least `lowerEarningsLimit` (both in today's money, with real
  * salary growth), or if it is before `niCreditsUntilAge` (NI credits or voluntary NI).
  */
-export function qualifyingYearsAtStart(person: Person, currentAge: number, startAge: number, sp: StatePensionConfig, lowerEarningsLimit = 0): number {
+export function qualifyingYearsAtStart(person: Person, currentAge: number, startAge: number, sp: StatePensionConfig, lowerEarningsLimit = 0, inflationMean = 0): number {
   let future = 0;
   for (let age = currentAge; age < startAge; age++) {
-    const salary = person.salary * Math.pow(1 + person.salaryGrowthRealPct, age - currentAge);
+    // In today's money: pay fixed in pounds falls in real terms as prices rise.
+    const years = age - currentAge;
+    const salary = person.salary * Math.pow(1 + person.salaryGrowthRealPct, years) / (person.salaryInflationLinked === false ? Math.pow(1 + inflationMean, years) : 1);
     const earns = age < person.retirementAge && salary >= lowerEarningsLimit && salary > 0;
     const credited = person.niCreditsUntilAge !== undefined && age < person.niCreditsUntilAge;
     if (earns || credited) future++;

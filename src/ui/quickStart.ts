@@ -4,6 +4,7 @@ import { ageAt, isIsoDate, todayIso } from '../model/dates';
 import { CASH, sim } from './exampleScenarios';
 import { h, confirmButton } from './dom';
 import { checkboxField, numberField, selectField, textField } from './fields';
+import { validateScenario } from '../model/validateScenario';
 
 /** How the ISA, GIA and pension are invested. */
 export const QUICK_MIXES = {
@@ -147,6 +148,23 @@ export function quickStartScenario(q: QuickStartInput, startDate: string = today
   };
 }
 
+/**
+ * Answers the quick start cannot turn into the plan the person meant, in plain words (empty if fine):
+ * a missing date of birth, a home to buy without an age or price, a mortgage without its years left.
+ */
+export function quickStartProblems(q: QuickStartInput, startDate: string): string[] {
+  const out: string[] = [];
+  if (!isIsoDate(q.dateOfBirth)) return ['enter your date of birth'];
+  const age = ageAt(q.dateOfBirth, startDate);
+  if (q.salary > 0 && q.stopWorkAge < age) out.push(`stop work at an age from ${age}, or set salary to 0 if you are not working`);
+  if (q.housing === 'rentThenBuy') {
+    if (!(q.buyAtAge > age)) out.push(`enter the age you plan to buy, after your current age (${age})`);
+    if (!(q.buyPrice > 0)) out.push('enter the price of the home you plan to buy');
+  }
+  if (q.housing === 'own' && q.mortgageBalance > 0 && !(q.mortgageYears > 0)) out.push('enter how many years are left on your mortgage');
+  return out;
+}
+
 /** Answers survive re-renders of the Overview tab within a visit. */
 const answers: QuickStartInput = quickStartDefaults();
 
@@ -163,12 +181,23 @@ export function quickStartSection(store: Store, open: boolean, rerender: () => v
     numberField({ label, unit, nullable: true, min: 0, max: unit === 'pct' ? 1 : 120, step: unit === 'pct' ? 0.0025 : 1, value: answers[k], placeholder, help, onChange: (v) => { answers[k] = v; } });
   const error = h('p', { class: 'error', role: 'alert', hidden: true });
   const build = () => {
-    if (!isIsoDate(answers.dateOfBirth)) { error.textContent = 'Enter your date of birth first.'; error.hidden = false; return; }
-    const limit = Math.min(...Object.values(store.getState().config.tax).map((y) => y.premiumBonds.holdingLimit));
-    store.replaceScenario(quickStartScenario(answers, todayIso(), limit));
-    store.dismissNotice('welcome');
-    location.hash = '#/results';
-    rerender();
+    const problems = quickStartProblems(answers, todayIso());
+    const config = store.getState().config;
+    if (problems.length === 0) {
+      // The answers can still make an invalid plan (e.g. a negative salary): check before replacing anything.
+      const limit = Math.min(...Object.values(config.tax).map((y) => y.premiumBonds.holdingLimit));
+      const scenario = quickStartScenario(answers, todayIso(), limit);
+      problems.push(...validateScenario(scenario, config).map((i) => i.message));
+      if (problems.length === 0) {
+        store.replaceScenario(scenario);
+        store.dismissNotice('welcome');
+        location.hash = '#/results';
+        rerender();
+        return;
+      }
+    }
+    error.replaceChildren(h('strong', {}, 'Please check: '), ...problems.slice(0, 6).flatMap((m, k) => (k ? [' · ', m] : [m])));
+    error.hidden = false;
   };
   const group = (title: string, ...fields: HTMLElement[]) => h('fieldset', { class: 'quick-group' }, h('legend', {}, title), h('div', { class: 'grid' }, ...fields));
   /** Home: own (value, upkeep, mortgage), rent (monthly rent), or neither; the fields follow the choice. */

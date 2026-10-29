@@ -54,6 +54,7 @@ function rules2026(taxYear: string): TaxYearConfig {
       nilBand: 125000, band2Top: 250000, band2Rate: 0.02, band3Top: 925000, band3Rate: 0.05,
       band4Top: 1500000, band4Rate: 0.10, topRate: 0.12,
       ftbNilBand: 300000, ftbRate: 0.05, ftbMaxPrice: 500000,
+      surchargeRate: 0.05,                    // higher rates for additional dwellings, from 31 Oct 2024
     },
     lisa: {
       annualAllowance: 4000,                  // verified gov.uk 2026-10-28

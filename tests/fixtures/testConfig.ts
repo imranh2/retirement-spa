@@ -26,7 +26,7 @@ export const TEST_CONFIG: ConfigBundle = {
       propertyIncome: { basicRate: 0.20, higherRate: 0.40, additionalRate: 0.45 },
       isa: { annualAllowance: 20000 },
       premiumBonds: { holdingLimit: 50000 },
-      stampDuty: { nilBand: 125000, band2Top: 250000, band2Rate: 0.02, band3Top: 925000, band3Rate: 0.05, band4Top: 1500000, band4Rate: 0.10, topRate: 0.12, ftbNilBand: 300000, ftbRate: 0.05, ftbMaxPrice: 500000 },
+      stampDuty: { nilBand: 125000, band2Top: 250000, band2Rate: 0.02, band3Top: 925000, band3Rate: 0.05, band4Top: 1500000, band4Rate: 0.10, topRate: 0.12, ftbNilBand: 300000, ftbRate: 0.05, ftbMaxPrice: 500000, surchargeRate: 0.05 },
       lisa: { annualAllowance: 4000, bonusRate: 0.25, minAge: 18, maxOpenAge: 39, homePriceCap: 450000, maxContributionAge: 50, penaltyFreeAge: 60 },
       pension: { annualAllowance: 60000, mpaa: 10000, taxFreeFraction: 0.25, lumpSumAllowance: 268275, reliefAtSourceRate: 0.2,
         basicAmount: 3600, taperThresholdIncome: 200000, taperAdjustedIncome: 260000, taperRate: 0.5, taperMinimumAllowance: 10000 },

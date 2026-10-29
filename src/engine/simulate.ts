@@ -114,9 +114,9 @@ function partYearReturns(yr: YearReturns, frac: number): YearReturns {
 }
 
 /**
- * A tax year's rules for the part of it a plan covers: every yearly allowance and threshold
+ * A tax year's rules for the part of it a plan covers: tax allowances, bands and thresholds
  * scaled by `frac`, so tax on a part year's income is that share of a full year's tax. Rates,
- * ages and lifetime limits (Lump Sum Allowance, Premium Bonds holding) are unchanged.
+ * ages, contribution allowances and lifetime limits (Lump Sum Allowance, Premium Bonds) are unchanged.
  */
 export function partYearRules(c: TaxYearConfig, frac: number): TaxYearConfig {
   const k = (v: number) => v * frac;
@@ -129,10 +129,9 @@ export function partYearRules(c: TaxYearConfig, frac: number): TaxYearConfig {
     dividends: { ...c.dividends, allowance: k(c.dividends.allowance) },
     ni: { ...c.ni, primaryThreshold: k(c.ni.primaryThreshold), upperEarningsLimit: k(c.ni.upperEarningsLimit), lowerEarningsLimit: k(c.ni.lowerEarningsLimit) },
     cgt: { ...c.cgt, annualExempt: k(c.cgt.annualExempt) },
-    isa: { ...c.isa, annualAllowance: k(c.isa.annualAllowance) },
-    lisa: { ...c.lisa, annualAllowance: k(c.lisa.annualAllowance) },
-    pension: { ...c.pension, annualAllowance: k(c.pension.annualAllowance), mpaa: k(c.pension.mpaa), basicAmount: k(c.pension.basicAmount),
-      taperThresholdIncome: k(c.pension.taperThresholdIncome), taperAdjustedIncome: k(c.pension.taperAdjustedIncome), taperMinimumAllowance: k(c.pension.taperMinimumAllowance) },
+    // Contribution allowances (ISA, LISA, pension) are not scaled: what is left of them can all be
+    // used in the rest of the tax year. The pension taper's income tests are, as income is.
+    pension: { ...c.pension, taperThresholdIncome: k(c.pension.taperThresholdIncome), taperAdjustedIncome: k(c.pension.taperAdjustedIncome) },
   };
 }
 
@@ -172,7 +171,7 @@ function prepare(scenario: Scenario, config: ConfigBundle): Prepared {
   const spStartAge = people.map((p) => statePensionStartAge(p, config));
   // State Pension age in whole years (ignoring deferral): NI stops and qualifying years stop accruing here.
   const niEndAge = people.map((p) => defaultStatePensionStartAge(p.dateOfBirth, sp.ageSchedule));
-  const spEntitlementToday = people.map((p, i) => annualEntitlement(qualifyingYearsAtStart(p, startAges[i], niEndAge[i], sp, resolveTaxYear(config, labels[0], 1).ni.lowerEarningsLimit), sp)
+  const spEntitlementToday = people.map((p, i) => annualEntitlement(qualifyingYearsAtStart(p, startAges[i], niEndAge[i], sp, resolveTaxYear(config, labels[0], 1).ni.lowerEarningsLimit, config.market.inflation.mean), sp)
     * deferralMultiplier(spStartAge[i], niEndAge[i], sp) * baseToToday);
 
   const lsa = people.map(() => 0);
@@ -311,7 +310,6 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       rentTotal *= frac;
       for (let i = 0; i < nP; i++) { salary[i] *= frac; statePension[i] *= frac; taxableStreams[i] *= frac; otherStreams[i] *= frac; }
     }
-    const rentShare = rentTotal / nP;
 
     // Property events: downsize, last year's mortgage lump sums, this year's mortgage schedule
     const balances = [...ws.balances];
@@ -329,10 +327,14 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         owned[pi] = true;
         const price = propValue[pi];
         const deposit = price * Math.min(1, Math.max(0, p.depositPct ?? 1));
-        homePurchase += deposit + stampDuty(price, p.firstTimeBuyer === true, cfg.stampDuty) + (p.buyingCosts ?? 0) * index;
-        if (p.firstTimeBuyer && p.isMainResidence && price <= cfg.lisa.homePriceCap) lisaHomeOk = true;
+        // First-time relief (and a LISA) only for a main home bought with no other home owned; owning another adds the surcharge.
+        const ownsAnother = owned.some((o, k) => o && k !== pi);
+        const ftb = p.firstTimeBuyer === true && p.isMainResidence && !ownsAnother;
+        homePurchase += deposit + stampDuty(price, ftb, cfg.stampDuty, ownsAnother) + (p.buyingCosts ?? 0) * index;
+        if (ftb && price <= cfg.lisa.homePriceCap) lisaHomeOk = true;
         const loan = price - deposit;
         if (p.mortgage && loan > 0) mort[pi] = initialMortgageState({ ...p.mortgage, balance: loan });
+        rentTotal += rentNominal(p, index) * frac;   // a let property earns rent from the year it is bought
       }
       const d = p.downsize;
       if (d && p.isMainResidence && !downsized[pi] && age0 >= d.atAge) {
@@ -358,10 +360,12 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       }
       propertyCosts += runningCostsNominal(p, index, downsized[pi], propValue[pi]) * frac;
     });
+    const rentShare = rentTotal / nP;
     // Rent on a home and one-off costs: paid on top of the spending plan, like a mortgage.
     let rentPaid = 0;
     for (const r of scenario.rentPaid ?? []) {
-      if (age0 < (r.fromAge ?? 0) || age0 >= (r.untilAge ?? firstPurchaseAge)) continue;
+      const rentEnd = r.untilAge ?? ((r.fromAge ?? 0) < firstPurchaseAge ? firstPurchaseAge : Number.POSITIVE_INFINITY);
+      if (age0 < (r.fromAge ?? 0) || age0 >= rentEnd) continue;
       rentPaid += r.monthly * MONTHS_PER_YEAR * index * Math.pow(1 + r.growthRealPct, t) * frac;
     }
     let oneOffCosts = 0;
@@ -545,6 +549,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       const regular = (spend + propertyCosts + rentPaid + plan.fromTakeHome + baselineTax - inflows) / months;
       const creditM = plan.credits.map((c) => c / months);
       const firstMonth = MONTHS_PER_YEAR - months;   // a part year runs its last `months` months
+      let drawnThisYear = 0;
       const nA = accounts.length;
       let bal = balances;            // owned by this loop; updated in place
       let monthIndex = index;
@@ -564,14 +569,21 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         for (let a = 0; a < nA; a++) { bal[a] += creditM[a]; creditGiaBasis(a, creditM[a]); }
         const needM = regular + mortgageMonth + (k === firstMonth ? lumpSums + downsizeShortfall + oneOffCosts + homePurchase - lisaForHome : 0);
         if (needM <= 0) {
-          routeSurplus(-needM, bal);
+          // Like annual steps, a later month's spare money first replaces what was drawn earlier this
+          // year (kept in cash); only the rest is spare income.
+          const repay = prep.firstCash >= 0 ? Math.min(-needM, drawnThisYear) : 0;
+          if (repay > 0) { bal[prep.firstCash] += repay; drawnThisYear -= repay; }
+          routeSurplus(-needM - repay, bal);
         } else {
-          const res = executeWithdrawals(deferCtx, needM, { ...ws, balances: bal });
+          // Earlier months' taxable pension counts against this year's allowance room.
+          const monthCtx = { ...deferCtx, people: wPeople.map((p, i) => ({ ...p, priorPensionTaxable: pensionTaxable[i] })) };
+          const res = executeWithdrawals(monthCtx, needM, { ...ws, balances: bal });
           ws = res.state;
           bal = ws.balances;
           draws.cash += res.net.cash; draws.gia += res.net.gia; draws.isa += res.net.isa; draws.lisa += res.net.lisa; draws.premiumBonds += res.net.premiumBonds; draws.dcPension += res.net.dcPension;
           for (let i = 0; i < nP; i++) { pensionTaxable[i] += res.pensionTaxable[i]; gains[i] += res.gains[i]; }
           failed = res.unmet > SHORTFALL_TOLERANCE_GBP;
+          drawnThisYear += needM - res.unmet;
         }
         unpackReturn(monthlyReturns, t * MONTHS_PER_YEAR + k, mr);
         if (failed) bal.fill(0);
@@ -635,8 +647,9 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       // Reinvested GIA income was taxed this year: add it to the cost basis.
       if (!failed) for (let a = 0; a < accounts.length; a++) creditGiaBasis(a, giaIncomeRate[a] * kept(a));
       indexEnd = monthIndex;
-      yearInflation = monthIndex / index - 1;
-      yearCash = cashGrowth - 1;
+      // Whole-year rates (a part year is annualised) for next year's State Pension rise and cash estimate.
+      yearInflation = Math.pow(monthIndex / index, MONTHS_PER_YEAR / months) - 1;
+      yearCash = Math.pow(cashGrowth, MONTHS_PER_YEAR / months) - 1;
     }
     if (ws.lsaUsed.some((u) => u >= cfg.pension.lumpSumAllowance)) flags.lsaExhausted = true;
 
@@ -671,7 +684,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     if (failed) return { failedAtAge: age0, flags };
 
     spIndex *= 1 + statePensionGrowth(yearInflation, config, firstTaxYear + t + 1);   // the increase for next tax year
-    prevInflation = yearInflation;
+    prevInflation = indexEnd / index - 1;   // prices over the year actually simulated (part of one, at first)
     lastCash = yearCash;
     index = indexEnd;
   }

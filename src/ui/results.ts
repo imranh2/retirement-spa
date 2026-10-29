@@ -1,4 +1,4 @@
-import type { CentralCaseRow, PercentileBands } from '../model/types';
+import type { CentralCaseRow, PercentileBands, SimulationResult } from '../model/types';
 import type { Store } from './store';
 import { h, downloadText, uid } from './dom';
 import { formatMoney, formatPct } from './format';
@@ -6,7 +6,7 @@ import { fanChart, barChart, stackedBars, percentLine, destroyCharts } from './c
 import { costsOnTop, keyFacts, verdictBlock, whatMustBePaid } from './verdict';
 import { cumulativeDepletion } from './longevity';
 import { whatIfPanel } from './whatIf';
-import { surplusDescription } from './scenarioTabs';
+import { issueLocation, surplusDescription } from './scenarioTabs';
 
 export interface ResultsCtx { store: Store; rerender: () => void }
 
@@ -70,6 +70,15 @@ function fanYMax(b: PercentileBands): number | undefined {
   const TAIL_CAP = 1.5;
   const cap = niceCeil(Math.max(...b.p75) * TAIL_CAP);
   return cap > 0 && Math.max(...b.p95) > cap ? cap : undefined;
+}
+
+/** The spread at the horizon in words: how many futures have run out, and the 1-in-20 range. */
+function portfolioSpread(r: SimulationResult, b: PercentileBands): string {
+  const last = (xs: number[]) => xs[xs.length - 1] ?? 0;
+  const ranOut = 1 - r.successRate;
+  if (last(b.p95) < 1) return 'Every simulated future has run out of money by then.';
+  const low = last(b.p5) < 1 ? `${formatPct(ranOut)} of futures have run out of money by then` : `1 run in 20 ends below ${formatMoney(last(b.p5))}`;
+  return `${low}; 1 in 20 ends above ${formatMoney(last(b.p95))}.`;
 }
 
 /** Round up to 1, 2, 2.5 or 5 times a power of ten, so a capped axis ends on a round tick. */
@@ -142,7 +151,12 @@ export function renderResults(c: ResultsCtx): HTMLElement {
   const st = c.store.getState();
   const r = c.store.planResults();
   const s = st.scenario;
-  const statusMsg = st.status === 'invalid' ? h('p', { class: 'error' }, 'The scenario or rules have errors, so the simulation has not run. See the highlighted fields (Overview lists them).')
+  const statusMsg = st.status === 'invalid' ? h('div', { class: 'error', role: 'alert' },
+    h('p', {}, 'The plan or rules have problems, so the simulation has not run:'),
+    h('ul', { class: 'error-list' }, ...st.scenarioErrors.slice(0, 8).map((e) => {
+      const loc = issueLocation(e.path, s);
+      return h('li', {}, h('strong', {}, `${loc.item}: `), e.message, ' ', h('a', { href: `#/${loc.tab}` }, `Fix in ${loc.tabLabel} →`));
+    }), ...(st.scenarioErrors.length === 0 ? [h('li', {}, 'See Rules & Assumptions for the highlighted fields.')] : [])))
     : st.status === 'error' ? h('p', { class: 'error', role: 'alert' }, `Simulation failed: ${st.runError ?? 'unknown error'}`)
       : st.status === 'cancelled' ? h('p', { class: 'muted' }, 'Run cancelled. Results below (if any) are from the previous run.', h('button', { type: 'button', class: 'btn small', onclick: () => c.store.runNow() }, 'Run again'))
         : null;
@@ -170,7 +184,8 @@ export function renderResults(c: ResultsCtx): HTMLElement {
   const netWorthBands = realMode ? r.netWorthReal : (r.netWorthNominal ?? r.netWorthReal);
   // Today's values (the same in real and nominal terms at the start).
   const startPortfolio = s.accounts.reduce((sum, a) => sum + a.balance, 0);
-  const startEquity = s.properties.reduce((sum, p) => sum + p.value - (p.mortgage?.balance ?? 0), 0);
+  // Only homes owned now: one still to buy is not part of today's net worth.
+  const startEquity = s.properties.filter((p) => p.buyAtAge === undefined).reduce((sum, p) => sum + p.value - (p.mortgage?.balance ?? 0), 0);
   const portfolioChart = bandsFromStart(r.ages, portfolioBands, startPortfolio);
   const netWorthChart = bandsFromStart(r.ages, netWorthBands, startPortfolio + startEquity);
   const portfolioCap = fanYMax(portfolioChart.bands);
@@ -216,8 +231,8 @@ export function renderResults(c: ResultsCtx): HTMLElement {
     whatIfPanel(c.store, r),
     h('div', { class: 'stats' },
       h('div', { class: 'card stat' }, h('h3', {}, `Portfolio at age ${s.sim.horizonAge}`), h('p', { class: 'big' }, formatMoney(at(portfolioBands.p50))),
-        h('p', { class: 'muted' }, `Savings and investments (not property), typical (median) outcome, ${realMode ? 'today’s money' : 'actual pounds at that age'}. ${at(portfolioBands.p5) < 1 ? 'At least 1 run in 20 has run out by then' : `1 run in 20 ends below ${formatMoney(at(portfolioBands.p5))}`}; 1 in 20 ends above ${formatMoney(at(portfolioBands.p95))}.`)),
-      h('div', { class: 'card stat' }, h('h3', {}, 'Lifetime tax paid'), h('p', { class: 'big' }, formatMoney(r.taxPaidTotal.median)),
+        h('p', { class: 'muted' }, `Savings and investments (not property), typical (median) outcome, ${realMode ? 'today’s money' : 'actual pounds at that age'}. ${portfolioSpread(r, portfolioBands)}`)),
+      h('div', { class: 'card stat' }, h('h3', {}, 'Lifetime tax paid (today’s money)'), h('p', { class: 'big' }, formatMoney(r.taxPaidTotal.median)),
         h('p', { class: 'muted' }, `Income tax, NI and CGT for the whole plan. Median, today’s money. 10th–90th percentile: ${formatMoney(r.taxPaidTotal.p10)} – ${formatMoney(r.taxPaidTotal.p90)}.`))),
     r.warnings.length > 0 ? h('section', { class: 'panel-section' }, h('h3', {}, 'Warnings'), h('ul', { class: 'warning-list' }, ...r.warnings.map((w) => h('li', {}, w)))) : null,
     h('div', { id: 'charts' }, fan.el), hasProperty ? nw.el : null, dep.el, inc.el, tax.el,

@@ -23,6 +23,7 @@ export interface TaxYearConfig {
     nilBand: number; band2Top: number; band2Rate: number; band3Top: number; band3Rate: number;
     band4Top: number; band4Rate: number; topRate: number;
     ftbNilBand: number; ftbRate: number; ftbMaxPrice: number;   // relief: 0% to ftbNilBand, ftbRate to ftbMaxPrice; none above it
+    surchargeRate: number;                                      // extra on the whole price for an additional home
   };              // most one person can hold, in pounds (not uprated)
   lisa: { annualAllowance: number; bonusRate: number; minAge: number; maxOpenAge: number; homePriceCap: number;
           maxContributionAge: number; penaltyFreeAge: number };

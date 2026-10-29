@@ -186,6 +186,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     nonNeg(`spending[${i}].annualSpend`, ph.annualSpend, 'Spending');
     if (!Number.isInteger(ph.fromAge)) add(`spending[${i}].fromAge`, 'Enter a whole-number age');
     else if (i > 0 && ph.fromAge <= s.spending[i - 1].fromAge) add(`spending[${i}].fromAge`, 'Phases must be in ascending order of age');
+    else if (i > 0 && age0Now !== undefined && ph.fromAge <= age0Now) add(`spending[${i}].fromAge`, `This phase would start now or earlier (${isAge(s.people[0]?.name || 'person 1', age0Now)}), replacing the first one. Enter a later age.`);
     if (ph.changePct !== undefined && (!finite(ph.changePct) || ph.changePct < -MAX_YEARLY_CHANGE || ph.changePct > MAX_YEARLY_CHANGE)) add(`spending[${i}].changePct`, 'Yearly change must be between -20% and 20%');
   });
   const wholeAge = (path: string, v: number | undefined) => { if (v !== undefined && (!Number.isInteger(v) || v < 0 || v > MAX_AGE)) add(path, 'Enter a whole-number age from 0 to 120'); };
@@ -196,6 +197,8 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     wholeAge(`${pre}.untilAge`, o.untilAge);
     if (o.everyYears !== undefined && (!Number.isInteger(o.everyYears) || o.everyYears < 1)) add(`${pre}.everyYears`, 'Repeat every whole number of years (1 or more), or leave blank for once');
     if (o.untilAge !== undefined && Number.isInteger(o.untilAge) && o.untilAge <= o.atAge) add(`${pre}.untilAge`, 'Must be after the first age');
+    // A one-off cost at an age already passed would never be paid.
+    if (!o.everyYears && age0Now !== undefined && Number.isInteger(o.atAge) && o.atAge < age0Now) add(`${pre}.atAge`, `This age has passed (${isAge(s.people[0]?.name || 'person 1', age0Now)}), so it would never be paid. Use this year or later.`);
   });
   (s.rentPaid ?? []).forEach((r, i) => {
     const pre = `rentPaid[${i}]`;

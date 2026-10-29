@@ -80,3 +80,16 @@ describe('quick start', () => {
     expect(build({ payRisePct: 0.02 }).people[0].salaryGrowthRealPct).toBe(0.02);
   });
 });
+
+describe('quick start checks the answers before building', () => {
+  it('catches a missing buying age or price, a mortgage with no years left, and a stop-work age already past', async () => {
+    const { quickStartProblems } = await import('../../src/ui/quickStart');
+    const base = answers();
+    expect(quickStartProblems(base, START)).toEqual([]);
+    expect(quickStartProblems({ ...base, dateOfBirth: '' }, START)).toEqual(['enter your date of birth']);
+    expect(quickStartProblems({ ...base, housing: 'rentThenBuy', buyAtAge: 0, buyPrice: 0 }, START).length).toBe(2);
+    expect(quickStartProblems({ ...base, housing: 'rentThenBuy', buyAtAge: 30, buyPrice: 300_000 }, START)[0]).toMatch(/after your current age/);
+    expect(quickStartProblems({ ...base, housing: 'own', mortgageBalance: 200_000, mortgageYears: 0 }, START)[0]).toMatch(/years are left/);
+    expect(quickStartProblems({ ...base, stopWorkAge: 30 }, START)[0]).toMatch(/stop work/);
+  });
+});

@@ -24,6 +24,8 @@ const ui: {
   retireAt?: number; spendPct: number; replaceCount: number; key?: string; result?: QuickResult; timer?: ReturnType<typeof setTimeout>;
   /** Max spend at the slider's stop-work age (`spendKey` says which scenario and age it is for). */
   spendKey?: string; spendAt?: MaxSpendValue; spendTimer?: ReturnType<typeof setTimeout>;
+  /** The plan's people and spending before "Use these in my plan", for Undo. */
+  undo?: Pick<Scenario, 'people' | 'spending'>;
 } = { spendPct: FULL_PCT, replaceCount: -1 };
 
 /** The scenario with the slider changes applied (retirement age, spending scaled). */
@@ -41,7 +43,7 @@ export function whatIfScenario(s: Scenario, retireAt: number | undefined, spendP
 export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
   const st = store.getState();
   const s = st.scenario;
-  if (ui.replaceCount !== store.replaceCount) { ui.retireAt = undefined; ui.spendPct = FULL_PCT; ui.result = undefined; ui.key = undefined; ui.spendAt = undefined; ui.spendKey = undefined; ui.replaceCount = store.replaceCount; }
+  if (ui.replaceCount !== store.replaceCount) { ui.retireAt = undefined; ui.spendPct = FULL_PCT; ui.result = undefined; ui.key = undefined; ui.spendAt = undefined; ui.spendKey = undefined; ui.undo = undefined; ui.replaceCount = store.replaceCount; }
   const ageNow = base.ages[0] ?? 0;
   const working = canChooseStopWork(s);
   // A stop-work age already reached means stopping now.
@@ -177,6 +179,7 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
   const apply = h('button', { type: 'button', class: 'btn primary', onclick: () => {
     const v = whatIfScenario(s, retireAt === undefined ? undefined : (ui.retireAt ?? planned), ui.spendPct);
     ui.retireAt = undefined; ui.spendPct = FULL_PCT; ui.result = undefined; ui.key = undefined; ui.spendAt = undefined; ui.spendKey = undefined;
+    ui.undo = { people: s.people, spending: s.spending };
     store.setScenarioValue('people', v.people);
     store.setScenarioValue('spending', v.spending);
   } }, 'Use these in my plan');
@@ -186,8 +189,17 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
     panel.replaceWith(fresh);
   } }, 'Back to my plan');
 
+  const undoBar = ui.undo ? h('p', { class: 'whatif-undo' }, 'Your plan now uses the what-if values. ',
+    h('button', { type: 'button', class: 'btn small', onclick: () => {
+      const prev = ui.undo;
+      ui.undo = undefined;
+      if (!prev) return;
+      store.setScenarioValue('people', prev.people);
+      store.setScenarioValue('spending', prev.spending);
+    } }, 'Undo')) : null;
   const panel = h('section', { class: 'panel-section whatif', id: 'whatif' },
     h('h3', {}, 'What if?'),
+    undoBar,
     h('p', { class: 'muted' }, working
       ? `Try stopping work earlier or later, or spending more or less, and see how long the money lasts. Move the stop-work age to see the most you could spend if you stopped then. ${s.people.length > 1 ? 'A partner who is still working moves their stop-work age by the same number of years. ' : ''}${extra ? `The spending slider scales your spending plan only; your ${extra} stay as they are. ` : ''}Nothing changes until you choose “Use these in my plan”.`
       : `Try spending more or less and see how long the money lasts. ${extra ? `The slider scales your spending plan only; your ${extra} stay as they are. ` : ''}Nothing changes until you choose “Use these in my plan”.`),
