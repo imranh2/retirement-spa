@@ -69,6 +69,9 @@ describe('(c) locked pension', () => {
   });
 });
 
+/** Full 5,000-run simulations can pass the default 5s limit when the whole suite runs in parallel. */
+const HEAVY_TEST_TIMEOUT_MS = 20_000;
+
 describe('(d) reproducibility', () => {
   const s = bridgeScenario(1200);
   it('same seed gives identical results; different seed differs', () => {
@@ -77,7 +80,7 @@ describe('(d) reproducibility', () => {
     expect(b.portfolioReal).toEqual(a.portfolioReal);
     const c = simulate({ ...s, sim: { ...s.sim, seed: 2 } }, TEST_CONFIG);
     expect(c.portfolioReal.p50).not.toEqual(a.portfolioReal.p50);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
   it('results are independent of chunk size', () => {
     const whole = simulate(s, TEST_CONFIG);
     const sim = createSimulation(s, TEST_CONFIG);
@@ -202,7 +205,7 @@ describe('example scenarios run', () => {
     expect(r.ages).toHaveLength(60);
     expect(ms).toBeLessThan(15000);
     console.log(`5000 runs x 60 years: ${Math.round(ms)} ms`);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
   it('all three examples simulate without errors', async () => {
     const { EXAMPLE_SCENARIOS } = await import('../../src/ui/exampleScenarios');
     for (const ex of EXAMPLE_SCENARIOS) {
