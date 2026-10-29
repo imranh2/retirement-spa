@@ -1,5 +1,6 @@
-import type { Account, AccountType, Contribution, IncomeStream, Mortgage, Person, Property, Scenario, WithdrawalStrategy } from '../model/types';
+import type { Account, AccountType, Contribution, IncomeStream, Mortgage, OneOffCost, Person, Property, RentPaid, Scenario, SpendingPhase, WithdrawalStrategy } from '../model/types';
 import { mortgagePayments } from '../model/mortgageMath';
+import { stampDuty } from '../model/stampDuty';
 import type { Store } from './store';
 import { h, confirmButton } from './dom';
 import { numberField, textField, selectField, checkboxField, errorSlot } from './fields';
@@ -168,7 +169,7 @@ export function describeScenario(s: Scenario): string[] {
     // "You" (the quick start's name) takes "earn"/"are", not "earns"/"is".
     const you = names[i] === 'You';
     const work = p.salary > 0 && age !== undefined && age < p.retirementAge
-      ? `${you ? 'earn' : 'earns'} ${formatMoney(p.salary)} a year and ${you ? 'stop' : 'stops'} work at ${p.retirementAge}`
+      ? `${you ? 'earn' : 'earns'} ${formatMoney(p.salary)} a year (${p.salaryInflationLinked === false ? `${p.salaryGrowthRealPct ? `rising ${formatPct(p.salaryGrowthRealPct)} a year in pounds` : 'fixed in pounds'}` : `rising with inflation${p.salaryGrowthRealPct ? ` plus ${formatPct(p.salaryGrowthRealPct)}` : ''}`}) and ${you ? 'stop' : 'stops'} work at ${p.retirementAge}`
       : `${you ? 'are' : 'is'} not working`;
     out.push(`${names[i]}${age !== undefined ? `, aged ${age},` : ''} ${work}, with ${p.niQualifyingYears} NI qualifying years.`);
   });
@@ -177,12 +178,18 @@ export function describeScenario(s: Scenario): string[] {
   const total = [...byType.values()].reduce((x, y) => x + y, 0);
   out.push(`Savings and investments total ${formatMoney(total)}: ${[...byType.entries()].map(([t, v]) => `${SHORT_LABEL[t]} ${formatMoney(v)}`).join(', ')}.`);
   for (const p of s.properties) {
+    if (p.buyAtAge !== undefined) {
+      out.push(`Buying ${p.name || 'a home'} at ${p.buyAtAge} for ${formatMoney(p.value)} in today’s money, with a ${formatPct(p.depositPct ?? 0)} deposit${p.firstTimeBuyer ? ' as a first-time buyer' : ''}${p.mortgage && (p.depositPct ?? 0) < 1 ? ` and a ${p.mortgage.termYearsRemaining}-year mortgage at ${formatPct(p.mortgage.rate)}` : ''}.`);
+      continue;
+    }
     out.push(`${p.name || 'A property'} worth ${formatMoney(p.value)}${p.mortgage ? ` with a ${formatMoney(p.mortgage.balance)} mortgage` : ''}${p.rentalIncomeAnnual ? `, let for ${formatMoney(p.rentalIncomeAnnual)} a year` : ''}${p.downsize ? `, downsizing at ${p.downsize.atAge}` : ''}.`);
   }
-  const phases = s.spending.map((ph, i) => (i === 0 ? `${formatMoney(ph.annualSpend)} a year` : `${formatMoney(ph.annualSpend)} from ${ph.fromAge}`)).join(', then ');
-  out.push(`Household spending (today's money, excluding mortgage and property costs): ${phases}.`);
+  const phases = s.spending.map((ph, i) => `${formatMoney(ph.annualSpend)}${i === 0 ? ' a year' : ` from ${ph.fromAge}`}${phaseSummary(ph).replace(/ · /g, ', ')}`).join('; then ');
+  out.push(`Household living costs (today's money, excluding rent and home costs): ${phases}.`);
+  for (const r of s.rentPaid ?? []) out.push(`${r.name || 'Rent'}: ${formatMoney(r.monthly)} a month${r.growthRealPct ? `, rising ${formatPct(r.growthRealPct)} a year above inflation` : ', rising with inflation'}${r.fromAge !== undefined ? ` from age ${r.fromAge}` : ''}${r.untilAge !== undefined ? ` until ${r.untilAge}` : s.properties.some((h) => h.buyAtAge !== undefined && h.isMainResidence) ? ' until you buy' : ''}.`);
+  for (const o of s.oneOffCosts ?? []) out.push(`${o.name || 'A one-off cost'}: ${formatMoney(o.amount)} at ${o.atAge}${o.everyYears ? `, then every ${o.everyYears} years${o.untilAge !== undefined ? ` until ${o.untilAge}` : ''}` : ''}.`);
   const st = s.strategy;
-  const strat = st.kind === 'fixedReal' ? 'spending follows the plan above, rising with inflation'
+  const strat = st.kind === 'fixedReal' ? 'spending follows the plan above'
     : st.kind === 'percentOfPortfolio' ? `in retirement, spending is ${formatPct(st.pct)} of the portfolio each year`
       : st.kind === 'guardrails' ? `in retirement, guardrails start at ${formatPct(st.initialPct)} of the portfolio and adjust by ${formatPct(st.adjust)}`
         : `in retirement, spending is ${formatPct(st.pct)} of the portfolio, kept between ${formatMoney(st.floor)} and ${formatMoney(st.ceiling)}`;
@@ -238,7 +245,9 @@ export function issueLocation(path: string, s: Scenario): { tab: string; tabLabe
     case 'incomeStreams': return { tab: 'people', tabLabel: 'People & Income', item: at(s.incomeStreams)?.name || 'Other income' };
     case 'accounts': return { tab: 'accounts', tabLabel: 'Accounts', item: at(s.accounts)?.name || 'Accounts' };
     case 'contributions': return { tab: 'contributions', tabLabel: 'Contributions', item: i !== undefined ? `Contribution ${i + 1}` : 'Contributions' };
-    case 'properties': return { tab: 'property', tabLabel: 'Property & Mortgage', item: at(s.properties)?.name || 'Property' };
+    case 'rentPaid': return { tab: 'property', tabLabel: 'Home & Property', item: at(s.rentPaid ?? [])?.name || 'Rent' };
+    case 'oneOffCosts': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: at(s.oneOffCosts ?? [])?.name || 'One-off cost' };
+    case 'properties': return { tab: 'property', tabLabel: 'Home & Property', item: at(s.properties)?.name || 'Property' };
     case 'spending': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: i !== undefined ? `Spending phase ${i + 1}` : 'Spending plan' };
     case 'strategy': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Withdrawal strategy' };
     case 'withdrawalOrder': return { tab: 'spending', tabLabel: 'Spending & Strategy', item: 'Withdrawal order' };
@@ -305,7 +314,12 @@ function personFields(c: TabCtx, p: Person, i: number): Node[] {
     } }),
     textField({ label: 'Date of birth', type: 'date', value: p.dateOfBirth, errorPath: `${pre}.dateOfBirth`, onChange: (v) => setS(c, `${pre}.dateOfBirth`, v) }),
     withTakeHome(c, numberField({ label: 'Salary (gross, per year)', unit: 'gbp', min: 0, step: 100, value: p.salary, errorPath: `${pre}.salary`, help: 'Gross annual employment income in today’s money. Set 0 if not working.', onChange: (v) => setS(c, `${pre}.salary`, v ?? 0) }), i),
-    numberField({ label: 'Salary growth above inflation', unit: 'pct', step: 0.001, value: p.salaryGrowthRealPct, errorPath: `${pre}.salaryGrowthRealPct`, help: 'Annual pay rise above inflation, e.g. 1%.', onChange: (v) => setS(c, `${pre}.salaryGrowthRealPct`, v ?? 0) }),
+    numberField({ label: p.salaryInflationLinked === false ? 'Pay rise each year' : 'Pay rise above inflation', unit: 'pct', step: 0.001, value: p.salaryGrowthRealPct, errorPath: `${pre}.salaryGrowthRealPct`,
+      help: p.salaryInflationLinked === false ? 'In pounds: 0% means your pay stays the same while prices rise. 2% roughly keeps pace with inflation.' : 'On top of inflation, e.g. 1% for promotions and pay progression.',
+      onChange: (v) => setS(c, `${pre}.salaryGrowthRealPct`, v ?? 0) }),
+    checkboxField({ label: 'Pay rises with inflation', checked: p.salaryInflationLinked !== false, errorPath: `${pre}.salaryInflationLinked`,
+      help: 'Pay rises are not guaranteed, so new plans assume pay stays the same in pounds (only the rise above). That is cautious: over 20 years at 2.5% inflation, fixed pay buys about 40% less. Tick if your pay reliably keeps up with prices.',
+      onChange: (v) => { setS(c, `${pre}.salaryInflationLinked`, v ? undefined : false); c.rerender(); } }),
     withTaxYear(c, numberField({ label: 'Stops work at', unit: 'age', min: 0, max: 120, step: 1, value: p.retirementAge, errorPath: `${pre}.retirementAge`, help: 'Salary stops at this age, and so do contributions unless you set them to carry on (Contributions tab). For person 1 this is also when the retirement withdrawal strategy begins. Each year of the plan is a whole tax year.', onChange: (v) => setS(c, `${pre}.retirementAge`, v ?? 0) }), i, 'until', '', (now) => `That is before ${p.name === 'You' ? 'your' : `${p.name || `person ${i + 1}`}’s`} current age (${now}), so ${p.name === 'You' ? 'you are' : 'they are'} treated as not working: no salary in this plan. Enter a later age if still working.`),
     numberField({ label: 'NI qualifying years so far', unit: 'years', min: 0, max: 60, step: 1, value: p.niQualifyingYears, errorPath: `${pre}.niQualifyingYears`, help: 'From your State Pension forecast on gov.uk. Each future year before State Pension age adds one if you earn at least the lower earnings limit, or get NI credits (see below).', onChange: (v) => setS(c, `${pre}.niQualifyingYears`, v ?? 0) }),
     numberField({ label: 'NI credits or voluntary NI until', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: p.niCreditsUntilAge, placeholder: 'none', errorPath: `${pre}.niCreditsUntilAge`,
@@ -378,7 +392,7 @@ export function renderPeople(c: TabCtx): HTMLElement {
           incomeStreams: fix(cur.incomeStreams),
         });
       },
-      onAdd: twoPeople ? undefined : () => setS(c, `people[${s.people.length}]`, { name: 'Partner', dateOfBirth: s.people[0]?.dateOfBirth ?? '1970-01-01', salary: 0, salaryGrowthRealPct: 0, retirementAge: 60, niQualifyingYears: 0 } satisfies Person),
+      onAdd: twoPeople ? undefined : () => setS(c, `people[${s.people.length}]`, { name: 'Partner', dateOfBirth: s.people[0]?.dateOfBirth ?? '1970-01-01', salary: 0, salaryGrowthRealPct: 0, salaryInflationLinked: false, retirementAge: 60, niQualifyingYears: 0 } satisfies Person),
       addLabel: 'Add a partner',
     }),
     list(c, {
@@ -590,12 +604,41 @@ function mortgagePaymentNote(m: Mortgage, id: string): HTMLElement {
     '. ', h('span', { class: 'muted' }, 'Worked out from the balance, rates and term; check it against your lender’s figure. Paid on top of your spending plan.'));
 }
 
+/** Buying a home later: age, deposit, fees, first-time buyer, and what that costs at today's prices. */
+function purchaseFields(c: TabCtx, p: Property, i: number): Node[] {
+  const pre = `properties[${i}]`;
+  const cfg = c.store.getState().config;
+  const rules = cfg.tax[Object.keys(cfg.tax).sort().slice(-1)[0]];
+  const deposit = p.value * (p.depositPct ?? 0);
+  const duty = rules ? stampDuty(p.value, p.firstTimeBuyer === true, rules.stampDuty) : 0;
+  const lisaOk = p.firstTimeBuyer && rules && p.value <= rules.lisa.homePriceCap;
+  return [
+    withTaxYear(c, numberField({ label: 'Buy at age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: p.buyAtAge ?? null, errorPath: `${pre}.buyAtAge`, help: 'Until then the home is not owned: no value, costs or mortgage. Rent with no end age stops at this age.', onChange: (v) => setS(c, `${pre}.buyAtAge`, v ?? 0) }), 0, 'from', ''),
+    numberField({ label: 'Deposit', unit: 'pct', min: 0, max: 1, step: 0.01, value: p.depositPct ?? 0, errorPath: `${pre}.depositPct`, help: 'Share of the price paid from savings; the mortgage below pays the rest.', onChange: (v) => { setS(c, `${pre}.depositPct`, v ?? 0); } }),
+    numberField({ label: 'Fees', unit: 'gbp', nullable: true, min: 0, step: 100, value: p.buyingCosts, placeholder: 'none', errorPath: `${pre}.buyingCosts`, help: 'Legal, survey, mortgage and moving costs, in today’s money. Stamp duty is worked out for you.', onChange: (v) => setS(c, `${pre}.buyingCosts`, v ?? undefined) }),
+    checkboxField({ label: 'First-time buyer', checked: p.firstTimeBuyer === true, errorPath: `${pre}.firstTimeBuyer`, help: 'Stamp duty relief (England and NI), and a Lifetime ISA can go towards the deposit if the price is within its cap.', onChange: (v) => { setS(c, `${pre}.firstTimeBuyer`, v); c.rerender(); } }),
+    h('p', { class: 'muted full' }, `At today’s prices: deposit ${formatMoney(deposit)}, stamp duty about ${formatMoney(duty)}${p.buyingCosts ? `, fees ${formatMoney(p.buyingCosts)}` : ''}, all paid from your savings in that tax year${lisaOk ? ' (a LISA first)' : ''}; the mortgage is ${formatMoney(Math.max(0, p.value - deposit))}. All of these rise with prices until you buy.`),
+  ];
+}
+
 function propertyFields(c: TabCtx, p: Property, i: number): Node[] {
   const pre = `properties[${i}]`;
   const s = sc(c);
+  const buying = p.buyAtAge !== undefined;
+  const ageNow = startAge(s, 0) ?? 0;
   const fields: Node[] = [
     textField({ label: 'Name', value: p.name, errorPath: `${pre}.name`, onChange: (v) => setS(c, `${pre}.name`, v) }),
-    numberField({ label: 'Value today', unit: 'gbp', min: 0, step: 1000, value: p.value, errorPath: `${pre}.value`, onChange: (v) => setS(c, `${pre}.value`, v ?? 0) }),
+    selectField({ label: 'Owned', value: buying ? 'buy' : 'own',
+      options: [{ value: 'own', label: 'I own it now' }, { value: 'buy', label: 'I plan to buy it' }],
+      onChange: (v) => {
+        if (v === 'buy') setS(c, pre, { ...sc(c).properties[i], buyAtAge: ageNow + 2, depositPct: 0.1, buyingCosts: 3000, firstTimeBuyer: true, ...(sc(c).properties[i].mortgage ? {} : { mortgage: { balance: 0, type: 'repayment', rate: 0.045, fixedYearsRemaining: 5, reversionRate: 0.045, termYearsRemaining: 25, monthlyOverpayment: 0 } }) });
+        else { const { buyAtAge: _a, depositPct: _d, buyingCosts: _b, firstTimeBuyer: _f, ...rest } = sc(c).properties[i]; setS(c, pre, rest); }
+        c.rerender();
+      } }),
+    numberField({ label: buying ? 'Price (today’s money)' : 'Value today', unit: 'gbp', min: 0, step: 1000, value: p.value, errorPath: `${pre}.value`,
+      help: buying ? 'What the home would cost today. Its price rises with inflation plus the growth below until you buy.' : undefined,
+      onChange: (v) => setS(c, `${pre}.value`, v ?? 0) }),
+    ...(buying ? purchaseFields(c, p, i) : []),
     numberField({ label: 'Growth above inflation', unit: 'pct', step: 0.001, value: p.growthRealPct, errorPath: `${pre}.growthRealPct`, help: 'Replaces the market property return for this home; the year-to-year volatility still applies.', onChange: (v) => setS(c, `${pre}.growthRealPct`, v ?? 0) }),
     numberField({ label: 'Running costs per year', unit: 'gbp', min: 0, step: 100, value: p.runningCostsAnnual, errorPath: `${pre}.runningCostsAnnual`, help: 'Fixed costs such as insurance, council tax or service charges, in today’s money.', onChange: (v) => setS(c, `${pre}.runningCostsAnnual`, v ?? 0) }),
     numberField({ label: 'Plus % of home value per year', unit: 'pct', nullable: true, min: 0, max: 0.1, step: 0.001, value: p.runningCostsPctOfValue, placeholder: 'none', errorPath: `${pre}.runningCostsPctOfValue`, help: 'Costs that grow with the home’s value, such as maintenance (often 1% a year). Added to the fixed amount.', onChange: (v) => setS(c, `${pre}.runningCostsPctOfValue`, v ?? undefined) }),
@@ -605,23 +648,25 @@ function propertyFields(c: TabCtx, p: Property, i: number): Node[] {
   const m = p.mortgage;
   const payId = `mortgage-pay-${i}`;
   /** Set a mortgage field and refresh the calculated payment beside the form. */
+  // A home still to buy: the loan is the price less the deposit, at today's prices.
+  const withLoan = (mm: Mortgage) => (buying ? { ...mm, balance: Math.max(0, p.value * (1 - (sc(c).properties[i]?.depositPct ?? 0))) } : mm);
   const setM = (key: keyof Mortgage, value: unknown) => {
     setS(c, `${pre}.mortgage.${key}`, value);
     const now = sc(c).properties[i]?.mortgage;
     const el = document.getElementById(payId);
-    if (now && el) el.replaceWith(mortgagePaymentNote(now, payId));
+    if (now && el) el.replaceWith(mortgagePaymentNote(withLoan(now), payId));
   };
   fields.push(h('fieldset', { class: 'full' }, h('legend', {}, 'Mortgage'),
     checkboxField({ label: 'Has a mortgage', checked: m !== undefined, onChange: (v) => { setS(c, `${pre}.mortgage`, v ? { balance: 100000, type: 'repayment', rate: 0.045, fixedYearsRemaining: 2, reversionRate: 0.065, termYearsRemaining: 20, monthlyOverpayment: 0 } : undefined); c.rerender(); } }),
     m ? h('div', { class: 'grid' },
-      numberField({ label: 'Balance', unit: 'gbp', min: 0, step: 1000, value: m.balance, errorPath: `${pre}.mortgage.balance`, onChange: (v) => setM('balance', v ?? 0) }),
+      buying ? null : numberField({ label: 'Balance', unit: 'gbp', min: 0, step: 1000, value: m.balance, errorPath: `${pre}.mortgage.balance`, onChange: (v) => setM('balance', v ?? 0) }),
       selectField({ label: 'Type', value: m.type, options: [{ value: 'repayment', label: 'Repayment' }, { value: 'interestOnly', label: 'Interest only' }], onChange: (v) => setM('type', v) }),
-      numberField({ label: 'Current rate', unit: 'pct', min: 0, max: 0.3, step: 0.0005, value: m.rate, errorPath: `${pre}.mortgage.rate`, onChange: (v) => setM('rate', v ?? 0) }),
-      numberField({ label: 'Years left on fixed rate', unit: 'years', min: 0, step: 0.5, value: m.fixedYearsRemaining, errorPath: `${pre}.mortgage.fixedYearsRemaining`, onChange: (v) => setM('fixedYearsRemaining', v ?? 0) }),
+      numberField({ label: buying ? 'Rate' : 'Current rate', unit: 'pct', min: 0, max: 0.3, step: 0.0005, value: m.rate, errorPath: `${pre}.mortgage.rate`, onChange: (v) => setM('rate', v ?? 0) }),
+      numberField({ label: buying ? 'Fixed for' : 'Years left on fixed rate', unit: 'years', min: 0, step: 0.5, value: m.fixedYearsRemaining, errorPath: `${pre}.mortgage.fixedYearsRemaining`, onChange: (v) => setM('fixedYearsRemaining', v ?? 0) }),
       numberField({ label: 'Rate after the fix', unit: 'pct', min: 0, max: 0.3, step: 0.0005, value: m.reversionRate, errorPath: `${pre}.mortgage.reversionRate`, onChange: (v) => setM('reversionRate', v ?? 0) }),
-      numberField({ label: 'Term remaining', unit: 'years', min: 0, step: 0.5, value: m.termYearsRemaining, errorPath: `${pre}.mortgage.termYearsRemaining`, help: 'Any balance left at the end of the term (e.g. interest-only) is paid as a lump sum the following year.', onChange: (v) => setM('termYearsRemaining', v ?? 0) }),
+      numberField({ label: buying ? 'Term' : 'Term remaining', unit: 'years', min: 0, step: 0.5, value: m.termYearsRemaining, errorPath: `${pre}.mortgage.termYearsRemaining`, help: 'Any balance left at the end of the term (e.g. interest-only) is paid as a lump sum the following year.', onChange: (v) => setM('termYearsRemaining', v ?? 0) }),
       numberField({ label: 'Monthly overpayment', unit: 'gbp', min: 0, step: 10, value: m.monthlyOverpayment, errorPath: `${pre}.mortgage.monthlyOverpayment`, help: 'Fixed cash amount, not inflated.', onChange: (v) => setM('monthlyOverpayment', v ?? 0) }),
-      mortgagePaymentNote(m, payId),
+      mortgagePaymentNote(withLoan(m), payId),
     ) : null));
   if (p.isMainResidence) {
     const d = p.downsize;
@@ -637,19 +682,73 @@ function propertyFields(c: TabCtx, p: Property, i: number): Node[] {
   return fields;
 }
 
+/** Rent paid on a home: monthly amount, yearly rise and the ages it applies. */
+function rentFields(c: TabCtx, r: RentPaid, i: number): Node[] {
+  const pre = `rentPaid[${i}]`;
+  return [
+    textField({ label: 'Name', value: r.name, errorPath: `${pre}.name`, onChange: (v) => setS(c, `${pre}.name`, v) }),
+    numberField({ label: 'Rent', unit: 'gbpMonth', min: 0, step: 25, value: r.monthly, errorPath: `${pre}.monthly`, help: 'In today’s money. Bills, council tax and the like belong in living costs (Spending & Strategy).', onChange: (v) => setS(c, `${pre}.monthly`, v ?? 0) }),
+    numberField({ label: 'Rises each year by', unit: 'pct', min: -0.2, max: 0.2, step: 0.005, value: r.growthRealPct, errorPath: `${pre}.growthRealPct`, help: 'On top of inflation: 0% means rent keeps pace with prices. UK rents have risen a little faster than prices over the long run.', onChange: (v) => setS(c, `${pre}.growthRealPct`, v ?? 0) }),
+    withTaxYear(c, numberField({ label: 'From age (person 1)', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: r.fromAge, placeholder: 'now', errorPath: `${pre}.fromAge`, onChange: (v) => setS(c, `${pre}.fromAge`, v ?? undefined) }), 0, 'from', 'Already started'),
+    withTaxYear(c, numberField({ label: 'Until age (not including)', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: r.untilAge, placeholder: 'for life', errorPath: `${pre}.untilAge`, help: 'Leave blank to rent for life.', onChange: (v) => setS(c, `${pre}.untilAge`, v ?? undefined) }), 0, 'until', 'For life'),
+  ];
+}
+
 export function renderProperty(c: TabCtx): HTMLElement {
   const s = sc(c);
-  return list(c, {
+  const rents = s.rentPaid ?? [];
+  const rent = list(c, {
+    title: 'Renting', path: 'rentPaid', items: rents,
+    intro: 'If you rent your home, add the rent here. It is paid every month on top of your living costs, like a mortgage. Add another period if it will change, e.g. moving somewhere cheaper later.',
+    heading: (r) => r.name || 'Rent',
+    body: (r, i) => rentFields(c, r, i),
+    onAdd: () => setS(c, 'rentPaid', [...rents, { id: uniqueId(rents.map((x) => x.id), 'rent'), name: rents.length === 0 ? 'Rent' : 'Later rent', monthly: 1200, growthRealPct: 0 } satisfies RentPaid]),
+    addLabel: 'Add rent',
+  });
+  return h('div', {}, rent, list(c, {
     title: 'Property & mortgages', path: 'properties', items: s.properties,
     intro: 'Property counts towards net worth but is never sold to fund spending, except by downsizing the main residence.',
     heading: (p) => p.name || 'Property',
     body: (p, i) => propertyFields(c, p, i),
     onAdd: () => setS(c, `properties[${s.properties.length}]`, { id: uniqueId(s.properties.map((x) => x.id), 'property'), name: s.properties.some((p) => p.isMainResidence) ? 'Buy-to-let' : 'Home', value: 300000, growthRealPct: 0.01, isMainResidence: !s.properties.some((p) => p.isMainResidence), runningCostsAnnual: 2000 } satisfies Property),
     addLabel: 'Add property',
-  });
+  }));
 }
 
 // ---------------- Spending & Strategy ----------------
+
+/** Short note after a phase heading, e.g. " · falls 1% a year · fixed in pounds". */
+function phaseSummary(ph: SpendingPhase): string {
+  const parts: string[] = [];
+  if (ph.changePct) parts.push(`${ph.changePct > 0 ? 'rises' : 'falls'} ${formatPct(Math.abs(ph.changePct))} a year`);
+  if (ph.inflationLinked === false) parts.push('fixed in pounds');
+  return parts.length ? ` · ${parts.join(' · ')}` : '';
+}
+
+/** One-off and repeating costs on top of the spending plan (a car every few years, a wedding). */
+function oneOffList(c: TabCtx): HTMLElement {
+  const s = sc(c);
+  const items = s.oneOffCosts ?? [];
+  const ageNow = startAge(s, 0) ?? 0;
+  return list(c, {
+    title: 'One-off and repeating costs', path: 'oneOffCosts', items,
+    intro: 'Big costs that are not part of normal living: a new car every 8 years, a wedding, a new kitchen, helping children. Paid on top of the spending plan in the tax year they fall.',
+    heading: (o) => `${o.name || 'Cost'} · ${formatMoney(o.amount)}${o.everyYears ? ` every ${o.everyYears} years` : ''}`,
+    body: (o, i) => {
+      const pre = `oneOffCosts[${i}]`;
+      return [
+        textField({ label: 'Name', value: o.name, errorPath: `${pre}.name`, onChange: (v) => setS(c, `${pre}.name`, v) }),
+        numberField({ label: 'Amount', unit: 'gbp', min: 0, step: 500, value: o.amount, errorPath: `${pre}.amount`, help: 'In today’s money if it rises with inflation; otherwise a fixed amount in pounds.', onChange: (v) => setS(c, `${pre}.amount`, v ?? 0) }),
+        withTaxYear(c, numberField({ label: 'At age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: o.atAge, errorPath: `${pre}.atAge`, onChange: (v) => setS(c, `${pre}.atAge`, v ?? 0) }), 0, 'from', ''),
+        numberField({ label: 'Repeat every', unit: 'years', nullable: true, min: 1, max: 50, step: 1, value: o.everyYears, placeholder: 'once', errorPath: `${pre}.everyYears`, help: 'Leave blank for a one-off.', onChange: (v) => setS(c, `${pre}.everyYears`, v ?? undefined) }),
+        withTaxYear(c, numberField({ label: 'Until age (not including)', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: o.untilAge, placeholder: 'end of plan', errorPath: `${pre}.untilAge`, help: 'For a repeating cost: no more after this age.', onChange: (v) => setS(c, `${pre}.untilAge`, v ?? undefined) }), 0, 'until', 'End of plan'),
+        checkboxField({ label: 'Rises with inflation', checked: o.inflationLinked, onChange: (v) => setS(c, `${pre}.inflationLinked`, v) }),
+      ];
+    },
+    onAdd: () => setS(c, 'oneOffCosts', [...items, { id: uniqueId(items.map((x) => x.id), 'cost'), name: 'New car', amount: 20000, atAge: ageNow + 1, everyYears: 8, inflationLinked: true } satisfies OneOffCost]),
+    addLabel: 'Add a cost',
+  });
+}
 
 const STRATEGY_DEFAULTS: Record<WithdrawalStrategy['kind'], WithdrawalStrategy> = {
   fixedReal: { kind: 'fixedReal' },
@@ -658,13 +757,13 @@ const STRATEGY_DEFAULTS: Record<WithdrawalStrategy['kind'], WithdrawalStrategy> 
   floorCeiling: { kind: 'floorCeiling', floor: 20000, ceiling: 50000, pct: 0.04 },
 };
 const STRATEGY_LABEL: Record<WithdrawalStrategy['kind'], string> = {
-  fixedReal: 'Spend the same each year, rising with inflation', percentOfPortfolio: 'Percentage of portfolio', guardrails: 'Guardrails (Guyton-Klinger style)', floorCeiling: 'Percentage with floor and ceiling',
+  fixedReal: 'Follow my spending plan', percentOfPortfolio: 'Percentage of portfolio', guardrails: 'Guardrails (Guyton-Klinger style)', floorCeiling: 'Percentage with floor and ceiling',
 };
 
 function strategyFields(c: TabCtx, st: WithdrawalStrategy): Node[] {
   const set = (k: string, v: number | null) => setS(c, `strategy.${k}`, v ?? 0);
   switch (st.kind) {
-    case 'fixedReal': return [h('p', { class: 'muted full' }, 'Spend exactly the plan above every year, rising with inflation. If the money runs out, the plan fails.')];
+    case 'fixedReal': return [h('p', { class: 'muted full' }, 'Spend exactly the plan above every year (rising with inflation unless a phase says otherwise). If the money runs out, the plan fails.')];
     case 'percentOfPortfolio': return [numberField({ label: 'Withdraw each year', unit: 'pct', min: 0, max: 1, step: 0.001, value: st.pct, errorPath: 'strategy.pct', help: 'Share of the start-of-year portfolio spent on living costs each year in retirement; mortgage and property costs are paid on top. Spending varies with markets.', onChange: (v) => set('pct', v) })];
     case 'guardrails': return [
       numberField({ label: 'Initial withdrawal rate', unit: 'pct', min: 0, max: 1, step: 0.001, value: st.initialPct, errorPath: 'strategy.initialPct', help: 'First retirement year: this share of the portfolio. Later years: last year’s amount plus inflation, unless a guardrail is hit.', onChange: (v) => set('initialPct', v) }),
@@ -710,17 +809,24 @@ export function renderSpending(c: TabCtx): HTMLElement {
         numberField({ label: 'Target chance', unit: 'pct', min: 0.01, max: 0.99, step: 0.01, value: s.sim.targetSuccessRate, errorPath: 'sim.targetSuccessRate', help: 'The chance of the money lasting that you are aiming for. Used for max sustainable spend, the earliest stop-work age and “Money lasts”.', onChange: (v) => setS(c, 'sim.targetSuccessRate', v ?? 0) }))),
     list(c, {
       title: 'Spending plan', path: 'spending', items: s.spending,
-      intro: `Household living costs in today’s money, for every year from now, working and retired. Excludes mortgage payments and property running costs (added separately). Add a phase if spending changes later, e.g. less once the children leave home or in your late 70s.`,
-      heading: (ph, i) => (i === 0 ? 'From now' : `From age ${ph.fromAge}`),
+      intro: `Household living costs in today’s money, for every year from now, working and retired. Excludes rent, mortgage payments and home running costs (added separately). Add a phase if spending changes at a later age, e.g. less once the children leave home or in your late 70s; each phase can also rise or fall a little every year.`,
+      heading: (ph, i) => `${i === 0 ? 'From now' : `From age ${ph.fromAge}`}${phaseSummary(ph)}`,
       body: (ph, i) => [
         // The first phase starts now, so its age is shown only if it needs fixing.
         ...(i === 0 && ageNow !== undefined && ph.fromAge <= ageNow ? [] : [withTaxYear(c, numberField({ label: 'From age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: ph.fromAge, errorPath: `spending[${i}].fromAge`, onChange: (v) => setS(c, `spending[${i}].fromAge`, v ?? 0) }), 0, 'from', '')]),
-        numberField({ label: 'Spending per year', unit: 'gbp', min: 0, step: 500, value: ph.annualSpend, errorPath: `spending[${i}].annualSpend`, help: 'Living costs in today’s money. Leave out mortgage payments and property running costs: they are entered under Property and paid on top.', onChange: (v) => setS(c, `spending[${i}].annualSpend`, v ?? 0) }),
+        numberField({ label: 'Spending per year', unit: 'gbp', min: 0, step: 500, value: ph.annualSpend, errorPath: `spending[${i}].annualSpend`, help: 'Living costs in today’s money. Leave out rent, mortgage payments and home running costs: they are entered under Home & Property and paid on top.', onChange: (v) => setS(c, `spending[${i}].annualSpend`, v ?? 0) }),
+        numberField({ label: 'Changes each year by', unit: 'pct', nullable: true, min: -0.2, max: 0.2, step: 0.005, value: ph.changePct, placeholder: '0%', errorPath: `spending[${i}].changePct`,
+          help: 'During this phase only. Negative to spend a little less each year, e.g. -1% as travel and hobbies slow down in later retirement. On top of inflation if the box below is ticked.',
+          onChange: (v) => { setS(c, `spending[${i}].changePct`, v ?? undefined); } }),
+        checkboxField({ label: 'Rises with inflation', checked: ph.inflationLinked !== false,
+          help: 'Untick to keep the amount fixed in pounds: it buys less each year as prices rise.',
+          onChange: (v) => { setS(c, `spending[${i}].inflationLinked`, v ? undefined : false); c.rerender(); } }),
       ],
       canRemove: () => s.spending.length > 1,
       onAdd: () => { const last = s.spending[s.spending.length - 1]; setS(c, `spending[${s.spending.length}]`, { fromAge: (last?.fromAge ?? 60) + 10, annualSpend: last?.annualSpend ?? 30000 }); },
       addLabel: 'Add phase',
     }),
+    oneOffList(c),
     h('section', { class: 'panel-section' }, h('h3', {}, 'Retirement withdrawal strategy'),
       h('p', { class: 'muted' }, `Applies from ${firstPersons(s)} stop-work age (${s.people[0]?.retirementAge ?? '—'}). Before then every strategy follows the spending plan.`),
       h('div', { class: 'grid' },

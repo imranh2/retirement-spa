@@ -4,11 +4,29 @@ import { calculateCGT, calculateIncomeTax, type TaxableIncome } from './tax';
 import { isAccessible, splitPensionWithdrawal } from './pension';
 import { GROSSUP_TOLERANCE_GBP, MAX_GROSSUP_ITERATIONS, SHORTFALL_TOLERANCE_GBP } from './constants';
 
-/** Annual spend (today's money) of the phase in force at `age`: the last phase with fromAge <= age. */
+/** The phase in force at `age`: the last phase with fromAge <= age (else the first). */
+function phaseAt(spending: SpendingPhase[], age: number): SpendingPhase | undefined {
+  let phase = spending[0];
+  for (const p of spending) if (p.fromAge <= age) phase = p;
+  return phase;
+}
+
+/** Annual spend (today's money, as entered) of the phase in force at `age`. */
 export function phaseSpend(spending: SpendingPhase[], age: number): number {
-  let amount = spending.length > 0 ? spending[0].annualSpend : 0;
-  for (const p of spending) if (p.fromAge <= age) amount = p.annualSpend;
-  return amount;
+  return phaseAt(spending, age)?.annualSpend ?? 0;
+}
+
+/**
+ * Planned spending at `age` in today's money, after the phase's yearly change since it began
+ * (or since the plan started, if earlier). A phase not linked to inflation is a fixed amount in
+ * pounds, so in today's money it shrinks as prices rise (`inflationIndex` = prices vs today).
+ */
+export function plannedSpendToday(spending: SpendingPhase[], age: number, startAge: number, inflationIndex: number): number {
+  const p = phaseAt(spending, age);
+  if (!p) return 0;
+  const years = Math.max(0, age - Math.max(p.fromAge, startAge));
+  const amount = p.annualSpend * Math.pow(1 + (p.changePct ?? 0), years);
+  return p.inflationLinked === false ? amount / inflationIndex : amount;
 }
 
 export interface TargetSpendInput {
@@ -53,6 +71,8 @@ export interface NeedInput {
   mortgagePayments: number;
   mortgageLumpSums: number;
   propertyCosts: number;
+  rentPaid?: number;               // rent on a home
+  oneOffCosts?: number;            // one-off or repeating costs due this year
   otherOutgoings: number;          // e.g. downsize shortfall
   taxes: number;                   // baseline income tax (incl. investment income tax) + NI
   contributionsFromTakeHome: number;
@@ -61,7 +81,7 @@ export interface NeedInput {
 
 /** Household cash need after all non-portfolio inflows. Negative = surplus. */
 export function householdNeed(n: NeedInput): number {
-  return n.targetSpend + n.mortgagePayments + n.mortgageLumpSums + n.propertyCosts + n.otherOutgoings
+  return n.targetSpend + n.mortgagePayments + n.mortgageLumpSums + n.propertyCosts + (n.rentPaid ?? 0) + (n.oneOffCosts ?? 0) + n.otherOutgoings
     + n.taxes + n.contributionsFromTakeHome - n.inflows;
 }
 

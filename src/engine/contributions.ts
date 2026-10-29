@@ -4,12 +4,13 @@ import { MONTHS_PER_YEAR } from './constants';
 import { capPensionContributions, pensionAllowance, pensionContributionCostReliefAtSource, personalContributionLimit, taperedAnnualAllowance } from './pension';
 
 /**
- * Gross salary for year t (nominal): salary * (1 + salaryGrowthRealPct)^t * inflationIndex
- * while the person's age < retirementAge, else 0.
+ * Gross salary for year t (nominal) while the person's age < retirementAge, else 0:
+ * salary * (1 + salaryGrowthRealPct)^t, times the inflation index if pay rises with inflation
+ * (otherwise the growth is in pounds, and pay buys less as prices rise).
  */
 export function grossSalary(person: Person, age: number, t: number, inflationIndex: number): number {
   if (age >= person.retirementAge) return 0;
-  return person.salary * Math.pow(1 + person.salaryGrowthRealPct, t) * inflationIndex;
+  return person.salary * Math.pow(1 + person.salaryGrowthRealPct, t) * (person.salaryInflationLinked === false ? 1 : inflationIndex);
 }
 
 /**

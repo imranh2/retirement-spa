@@ -6,7 +6,7 @@ import { getPath } from './paths';
 export const LAST_VERIFIED = '2026-10-28';
 
 export const GROUPS = [
-  'Tax years', 'Savings & dividends', 'National Insurance', 'Capital gains', 'ISA & LISA',
+  'Tax years', 'Savings & dividends', 'National Insurance', 'Capital gains', 'ISA & LISA', 'Stamp duty',
   'Pensions', 'State Pension', 'Market assumptions', 'Historical returns', 'Tax projection',
 ] as const;
 
@@ -15,6 +15,8 @@ const SRC = {
   incomeTax: GOV + 'income-tax-rates',
   savings: GOV + 'apply-tax-free-interest-on-savings',
   dividends: GOV + 'tax-on-dividends',
+  stampDuty: GOV + 'stamp-duty-land-tax/residential-property-rates',
+  stampDutyFtb: GOV + 'stamp-duty-land-tax/residential-property-rates',
   propertyIncome: GOV + 'government/publications/changes-to-tax-rates-for-property-savings-dividend-income',
   ni: GOV + 'national-insurance-rates-letters',
   cgt: GOV + 'capital-gains-tax',
@@ -85,6 +87,18 @@ export const CONFIG_FIELDS: FieldMeta[] = [
   f(`${Y}.isa.annualAllowance`, 'ISA annual allowance', 'gbp', 'ISA & LISA', 'Total that can be paid into ISAs (including a LISA) per person per tax year.', { ...GBP, sourceUrl: SRC.isa }),
   f(`${Y}.isa.cashIsaSubLimit`, 'Cash ISA sub-limit', 'gbp', 'ISA & LISA', 'Optional cap on cash ISA subscriptions. Not modelled yet; recorded for future use.', { ...GBP, nullable: true, sourceUrl: SRC.isa }),
   f(`${Y}.premiumBonds.holdingLimit`, 'Premium Bonds holding limit', 'gbp', 'ISA & LISA', 'The most one person can hold in NS&I Premium Bonds. Payments in above it go to their GIA, or cash.', { ...GBP, sourceUrl: 'https://www.nsandi.com/products/premium-bonds' }),
+  f(`${Y}.lisa.homePriceCap`, 'LISA first-home price cap', 'gbp', 'ISA & LISA', 'A LISA can pay towards a first home up to this price without the withdrawal charge.', { ...GBP, sourceUrl: SRC.lisa }),
+  f(`${Y}.stampDuty.nilBand`, 'Stamp duty: 0% up to', 'gbp', 'Stamp duty', 'Stamp Duty Land Tax on buying a home (England and NI) is charged in slices: none on the part of the price up to this.', { ...GBP, sourceUrl: SRC.stampDuty }),
+  f(`${Y}.stampDuty.band2Top`, 'Stamp duty: second band up to', 'gbp', 'Stamp duty', 'Top of the second slice.', { ...GBP, sourceUrl: SRC.stampDuty }),
+  f(`${Y}.stampDuty.band2Rate`, 'Stamp duty: second band rate', 'pct', 'Stamp duty', 'Rate on the second slice.', { ...RATE, sourceUrl: SRC.stampDuty }),
+  f(`${Y}.stampDuty.band3Top`, 'Stamp duty: third band up to', 'gbp', 'Stamp duty', 'Top of the third slice.', { ...GBP, sourceUrl: SRC.stampDuty }),
+  f(`${Y}.stampDuty.band3Rate`, 'Stamp duty: third band rate', 'pct', 'Stamp duty', 'Rate on the third slice.', { ...RATE, sourceUrl: SRC.stampDuty }),
+  f(`${Y}.stampDuty.band4Top`, 'Stamp duty: fourth band up to', 'gbp', 'Stamp duty', 'Top of the fourth slice.', { ...GBP, sourceUrl: SRC.stampDuty }),
+  f(`${Y}.stampDuty.band4Rate`, 'Stamp duty: fourth band rate', 'pct', 'Stamp duty', 'Rate on the fourth slice.', { ...RATE, sourceUrl: SRC.stampDuty }),
+  f(`${Y}.stampDuty.topRate`, 'Stamp duty: top rate', 'pct', 'Stamp duty', 'Rate on the part of the price above the fourth band.', { ...RATE, sourceUrl: SRC.stampDuty }),
+  f(`${Y}.stampDuty.ftbNilBand`, 'First-time buyers: 0% up to', 'gbp', 'Stamp duty', 'First-time buyer relief: no stamp duty on the price up to this.', { ...GBP, sourceUrl: SRC.stampDutyFtb }),
+  f(`${Y}.stampDuty.ftbRate`, 'First-time buyers: rate above that', 'pct', 'Stamp duty', 'Rate on the part of the price above the first-time buyer 0% band.', { ...RATE, sourceUrl: SRC.stampDutyFtb }),
+  f(`${Y}.stampDuty.ftbMaxPrice`, 'First-time buyer relief: price limit', 'gbp', 'Stamp duty', 'Above this price there is no first-time buyer relief: the normal rates apply.', { ...GBP, sourceUrl: SRC.stampDutyFtb }),
   f(`${Y}.lisa.annualAllowance`, 'LISA annual allowance', 'gbp', 'ISA & LISA', 'Maximum paid into a Lifetime ISA each tax year (counts towards the ISA allowance).', { ...GBP, sourceUrl: SRC.lisa }),
   f(`${Y}.lisa.bonusRate`, 'LISA bonus rate', 'pct', 'ISA & LISA', 'Government bonus added to each LISA contribution.', { ...RATE, sourceUrl: SRC.lisa }),
   f(`${Y}.lisa.minAge`, 'LISA minimum age', 'age', 'ISA & LISA', 'You must be at least this age to open or pay into a LISA.', { min: 0, max: 120, step: 1, sourceUrl: SRC.lisa }),

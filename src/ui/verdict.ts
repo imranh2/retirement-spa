@@ -13,13 +13,16 @@ import { surplusDescription } from './scenarioTabs';
  */
 export function costsOnTop(s: Scenario): string | null {
   const parts = costsOnTopList(s);
-  return parts.length ? parts.join(' and ') : null;
+  return parts.length ? (parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]) : null;
 }
 
 function costsOnTopList(s: Scenario): string[] {
   const mortgage = s.properties.some((p) => (p.mortgage?.balance ?? 0) > 0);
   const running = s.properties.some((p) => p.runningCostsAnnual > 0 || (p.runningCostsPctOfValue ?? 0) > 0);
-  return [mortgage ? 'mortgage payments' : null, running ? 'property running costs' : null].filter((x): x is string => x !== null);
+  const rent = (s.rentPaid ?? []).some((r) => r.monthly > 0);
+  const oneOff = (s.oneOffCosts ?? []).some((o) => o.amount > 0);
+  const buying = s.properties.some((p) => p.buyAtAge !== undefined);
+  return [rent ? 'rent' : null, buying ? 'the cost of buying a home' : null, mortgage ? 'mortgage payments' : null, running ? 'property running costs' : null, oneOff ? 'one-off costs' : null].filter((x): x is string => x !== null);
 }
 
 /** Everything a year must pay for a future to count as a success, e.g. "spending, mortgage payments and tax". */

@@ -104,7 +104,7 @@ export function startApp(root: HTMLElement): Store {
           h('span', { class: 'band-label' }, band.label))
         : h('p', { class: 'muted sum-empty' }, s.status === 'invalid' ? 'Fix the problems below to see results.' : 'Working out your results…'),
       r ? h('dl', { class: 'sum-stats' },
-        h('div', {}, h('dt', { title: 'The most you could spend a year on living costs and still hit your target success rate. Mortgage payments and property running costs are paid on top.' }, `Max spend at ${Math.round(s.scenario.sim.targetSuccessRate * 100)}% success${costsOnTop(s.scenario) ? ' (excl. home costs)' : ''}`),
+        h('div', {}, h('dt', { title: `The most you could spend a year on living costs and still hit your target success rate.${costsOnTop(s.scenario) ? ` Your ${costsOnTop(s.scenario)} are paid on top.` : ''}` }, `Max spend at ${Math.round(s.scenario.sim.targetSuccessRate * 100)}% success${costsOnTop(s.scenario) ? ' (living costs only)' : ''}`),
           h('dd', {}, s.maxSpend ? [`${formatMoney(s.maxSpend.annualSpendReal)}/yr`, deltaTag(delta.maxSpend, formatMoney, MIN_GBP)] : h('span', { class: 'muted' }, s.maxSpendProgress ? `working… ${s.maxSpendProgress.completed}/${s.maxSpendProgress.total}` : '—'))),
         working ? h('div', {}, h('dt', {}, 'Earliest stop-work age'), h('dd', {}, retireText ?? h('span', { class: 'muted' }, s.status === 'done' ? 'working…' : '—'))) : null,
         h('div', {}, h('dt', { title: 'Savings and investments, not property' }, `Median portfolio at ${horizon}`), h('dd', {}, lastMedian !== undefined ? formatMoneyCompact(lastMedian) : '—')),

@@ -59,4 +59,24 @@ describe('quick start', () => {
     expect(s.accounts.find((a) => a.type === 'premiumBonds')!.balance).toBe(50_000);
     expect(s.accounts.find((a) => a.type === 'cash')!.balance).toBe(10_000 + 10_000);
   });
+  it('a renter gets rent paid and no home', () => {
+    const s = build({ housing: 'rent', rentMonthly: 1_250, homeValue: 400_000, mortgageBalance: 100_000 });
+    expect(validateScenario(s, TEST_CONFIG)).toEqual([]);
+    expect(s.properties).toEqual([]);
+    expect(s.rentPaid).toEqual([{ id: 'rent', name: 'Rent', monthly: 1_250, growthRealPct: 0 }]);
+  });
+  it('renting now and buying later builds a home bought at that age, with rent until then', () => {
+    const s = build({ salary: 80_000, cash: 120_000, housing: 'rentThenBuy', rentMonthly: 1_100, buyAtAge: 43, buyPrice: 350_000, depositPct: 0.15, mortgageRate: 0.045, mortgageFixedYears: 5 });
+    expect(validateScenario(s, TEST_CONFIG)).toEqual([]);
+    expect(s.rentPaid?.[0]).toMatchObject({ monthly: 1_100 });
+    expect(s.properties[0]).toMatchObject({ value: 350_000, buyAtAge: 43, depositPct: 0.15, firstTimeBuyer: true, mortgage: { termYearsRemaining: 25, rate: 0.045 } });
+    const r = simulate(s, TEST_CONFIG, { runsOverride: 20 }).centralCase;
+    const at43 = r.find((row) => row.age === 43)!;
+    expect(at43.homePurchase).toBeGreaterThan(350_000 * 0.15);
+    expect(at43.rentPaid).toBe(0);
+  });
+  it('assumes pay stays the same in pounds unless a rise is given', () => {
+    expect(build().people[0]).toMatchObject({ salaryInflationLinked: false, salaryGrowthRealPct: 0 });
+    expect(build({ payRisePct: 0.02 }).people[0].salaryGrowthRealPct).toBe(0.02);
+  });
 });

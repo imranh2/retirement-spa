@@ -17,8 +17,14 @@ export interface TaxYearConfig {
         lowerEarningsLimit: number };                  // earnings at or above this make the year count for the State Pension
   cgt: { annualExempt: number; basicRate: number; higherRate: number };
   isa: { annualAllowance: number; cashIsaSubLimit?: number };
-  premiumBonds: { holdingLimit: number };              // most one person can hold, in pounds (not uprated)
-  lisa: { annualAllowance: number; bonusRate: number; minAge: number; maxOpenAge: number;
+  premiumBonds: { holdingLimit: number };
+  /** Stamp Duty Land Tax on a home (England and NI): marginal bands, and first-time buyer relief. */
+  stampDuty: {
+    nilBand: number; band2Top: number; band2Rate: number; band3Top: number; band3Rate: number;
+    band4Top: number; band4Rate: number; topRate: number;
+    ftbNilBand: number; ftbRate: number; ftbMaxPrice: number;   // relief: 0% to ftbNilBand, ftbRate to ftbMaxPrice; none above it
+  };              // most one person can hold, in pounds (not uprated)
+  lisa: { annualAllowance: number; bonusRate: number; minAge: number; maxOpenAge: number; homePriceCap: number;
           maxContributionAge: number; penaltyFreeAge: number };
   pension: { annualAllowance: number; mpaa: number; taxFreeFraction: number;
              lumpSumAllowance: number; reliefAtSourceRate: number;

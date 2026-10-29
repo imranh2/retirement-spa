@@ -49,11 +49,18 @@ function rules2026(taxYear: string): TaxYearConfig {
     // The planned £12,000 cash ISA limit from April 2027 was reversed in the Autumn Budget 2026 (stays £20,000), so no cashIsaSubLimit.
     isa: { annualAllowance: 20000 },          // verified gov.uk 2026-10-28
     premiumBonds: { holdingLimit: 50000 },    // verified nsandi.com 2026-10-28
+    // Rates from 1 April 2025, unchanged by the Autumn Budget 2026 (checked 2026-10-29).
+    stampDuty: {
+      nilBand: 125000, band2Top: 250000, band2Rate: 0.02, band3Top: 925000, band3Rate: 0.05,
+      band4Top: 1500000, band4Rate: 0.10, topRate: 0.12,
+      ftbNilBand: 300000, ftbRate: 0.05, ftbMaxPrice: 500000,
+    },
     lisa: {
       annualAllowance: 4000,                  // verified gov.uk 2026-10-28
       bonusRate: 0.25,                        // verified gov.uk 2026-10-28
       minAge: 18,                             // verified gov.uk 2026-10-28
       maxOpenAge: 39,                         // verified gov.uk 2026-10-28
+      homePriceCap: 450000,                   // LISA can buy a first home up to this price without the charge
       maxContributionAge: 50,                 // verified gov.uk 2026-10-28
       penaltyFreeAge: 60,                     // verified gov.uk 2026-10-28
     },

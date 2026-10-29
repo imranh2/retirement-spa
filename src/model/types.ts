@@ -29,6 +29,8 @@ export interface Person {
   dateOfBirth: string;               // ISO yyyy-mm-dd
   salary: number;                    // gross annual, today's money
   salaryGrowthRealPct: number;       // above inflation
+  /** Pay rises with inflation (default). False: pay is fixed in pounds, rising only by salaryGrowthRealPct. */
+  salaryInflationLinked?: boolean;
   retirementAge: number;             // employment income stops at this age
   niQualifyingYears: number;         // current qualifying years for State Pension
   statePensionStartAge?: number;     // override; default from DOB via config
@@ -75,7 +77,12 @@ export interface Mortgage {
 export interface Property {
   id: string;
   name: string;
-  value: number;
+  value: number;                     // today's money (for a home still to buy: its price in today's money)
+  /** Buy this home later, at person 1's age: until then it is not owned (no value, costs or mortgage). */
+  buyAtAge?: number;
+  depositPct?: number;               // share of the price paid as the deposit (rest is the mortgage)
+  buyingCosts?: number;              // legal, survey and similar fees, today's money (stamp duty is worked out)
+  firstTimeBuyer?: boolean;          // stamp duty relief, and a LISA can go towards the deposit
   growthRealPct: number;             // replaces market.property.meanReal for this property (vol/correlation unchanged)
   isMainResidence: boolean;
   mortgage?: Mortgage;
@@ -99,6 +106,31 @@ export interface IncomeStream {      // DB pension, part-time work, annuity ...
 export interface SpendingPhase {     // household living costs, ALL ages from now (working and retired)
   fromAge: number;                   // person 0's age
   annualSpend: number;               // today's money; excludes mortgage payments and property running costs
+  /** Rises with inflation (default). False: a fixed amount in pounds, which buys less as prices rise. */
+  inflationLinked?: boolean;
+  /** Change each year of the phase, e.g. -0.01: on top of inflation if inflation-linked, else in pounds. */
+  changePct?: number;
+}
+
+/** A one-off (or repeating) cost on top of the spending plan, e.g. a new car every 8 years. */
+export interface OneOffCost {
+  id: string;
+  name: string;
+  amount: number;                    // today's money if inflation-linked, else pounds
+  atAge: number;                     // person 0's age when it first happens
+  everyYears?: number;               // repeat this often (years); omitted = once
+  untilAge?: number;                 // last possible repeat is before this age; omitted = to the horizon
+  inflationLinked: boolean;
+}
+
+/** Rent paid on a home, on top of the spending plan (like a mortgage). */
+export interface RentPaid {
+  id: string;
+  name: string;
+  monthly: number;                   // today's money
+  growthRealPct: number;             // yearly rise above inflation (0 = with inflation)
+  fromAge?: number;                  // person 0's age it starts; omitted = now
+  untilAge?: number;                 // person 0's age it stops (exclusive); omitted = for life
 }
 
 export type WithdrawalStrategy =
@@ -135,6 +167,8 @@ export interface Scenario {
   strategy: WithdrawalStrategy;
   withdrawalOrder: AccountType[];    // e.g. ['cash','gia','isa','lisa','dcPension']
   surplus?: SurplusRule;             // default { kind: 'cash' }
+  oneOffCosts?: OneOffCost[];
+  rentPaid?: RentPaid[];
   /** Draw pensions first up to the personal allowance or basic-rate band each year; default 'inOrder'. */
   pensionDrawdown?: 'inOrder' | 'allowance' | 'basicRate';
   sim: SimSettings;
@@ -150,6 +184,8 @@ export interface CentralCaseRow {
   drawCash: number; drawGia: number; drawIsa: number; drawLisa: number; drawPension: number;
   drawPremiumBonds?: number;
   spending: number; mortgagePayments: number; propertyCosts: number;
+  rentPaid?: number; oneOffCosts?: number;
+  homePurchase?: number;              // deposit, stamp duty and fees in the year a home is bought
   mortgageInterest?: number;         // the interest part of mortgagePayments
   taxPaid: number; niPaid: number;
   savedFromPay?: number;             // contributions paid from take-home pay (ISA, GIA, cash, personal pension)

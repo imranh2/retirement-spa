@@ -267,6 +267,7 @@ export function renderConfigEditor(c: ConfigCtx): HTMLElement {
     'National Insurance': [scalarFields(c, 'National Insurance', year)],
     'Capital gains': [scalarFields(c, 'Capital gains', year)],
     'ISA & LISA': [scalarFields(c, 'ISA & LISA', year)],
+    'Stamp duty': [scalarFields(c, 'Stamp duty', year)],
     'Pensions': [scalarFields(c, 'Pensions', year)],
     'State Pension': [scalarFields(c, 'State Pension', year), scheduleEditor(c)],
     'Market assumptions': [h('p', { class: 'muted' }, 'Editable assumptions, not predictions. Returns are arithmetic means above inflation.'), scalarFields(c, 'Market assumptions', year), correlationEditor(c)],

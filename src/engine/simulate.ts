@@ -1,4 +1,4 @@
-import type { AccountType, CentralCaseRow, Scenario, SimulationResult } from '../model/types';
+import type { AccountType, CentralCaseRow, OneOffCost, Scenario, SimulationResult } from '../model/types';
 import type { ConfigBundle, TaxYearConfig } from '../config/configTypes';
 import { latestDefinedYear, resolveTaxYear, thresholdFactor } from '../config/resolveTaxYear';
 import { ageAt, taxYearLabel, taxYearStartYear, taxYearStartYearOf } from '../model/dates';
@@ -10,9 +10,9 @@ import { accessAgeForAccount } from './pension';
 import { annualEntitlement, deferralMultiplier, qualifyingYearsAtStart, statePensionGrowth, statePensionStartAge } from './statePension';
 import { defaultStatePensionStartAge } from '../model/ageRules';
 import { initialMortgageState, scheduleMonths, type MortgageState } from './mortgage';
-import { downsize, rentNominal, runningCostsNominal } from './property';
+import { downsize, rentNominal, runningCostsNominal, stampDuty } from './property';
 import { grossSalary, planContributions, type PersonYear } from './contributions';
-import { emptyByType, executeWithdrawals, householdNeed, phaseSpend, targetSpend, type ByType, type WithdrawalState } from './withdrawal';
+import { emptyByType, executeWithdrawals, householdNeed, plannedSpendToday, targetSpend, type ByType, type WithdrawalState } from './withdrawal';
 import { earliestRetirementSteps } from './retireAge';
 import type { RetireAgeOutcome } from '../model/retirement';
 import { depletionHistogram, MAX_SPEND_STEPS, maxSpendSteps, percentile, percentileBands, successRate, type MaxSpendOutcome } from './stats';
@@ -80,7 +80,7 @@ interface YearRecord {
   indexEnd: number;
   salary: number; statePension: number; otherIncome: number; rental: number;
   draws: ByType;
-  spending: number; mortgagePayments: number; mortgageInterest: number; propertyCosts: number;
+  spending: number; mortgagePayments: number; mortgageInterest: number; propertyCosts: number; rentPaid: number; oneOffCosts: number; homePurchase: number;
   incomeTax: number; ni: number; cgt: number;
   savedFromPay: number; spareIncome: number;
   months: number;          // months of the tax year covered (fewer in a part first year)
@@ -90,6 +90,13 @@ interface YearRecord {
 interface RunFlags { pensionCapped: boolean; allowanceTapered: boolean; isaOverflow: boolean; premiumBondsOverflow: boolean; lisaIneligible: boolean; mortgageLumpSum: boolean; downsizeShortfall: boolean; lsaExhausted: boolean }
 
 interface RunOutcome { failedAtAge: number; flags: RunFlags }
+
+/** Whether a one-off cost falls due at `age`: at its age, then every `everyYears` before `untilAge`. */
+export function oneOffDue(o: OneOffCost, age: number): boolean {
+  if (age < o.atAge) return false;
+  if (!o.everyYears || o.everyYears <= 0) return age === o.atAge;
+  return (age - o.atAge) % o.everyYears === 0 && (o.untilAge === undefined || age < o.untilAge);
+}
 
 /** Whole months left in the tax year from `startDate` to the next 6 April (1 to 12). */
 export function monthsLeftInTaxYear(startDate: string): number {
@@ -243,8 +250,11 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     lsaUsed: [...prep.initialLsaUsed],
     mpaaTriggered: people.map((p) => p.mpaaTriggered === true),
   };
-  const propValue = properties.map((p) => p.value);
-  const mort: (MortgageState | null)[] = properties.map((p) => (p.mortgage && p.mortgage.balance > 0 ? initialMortgageState(p.mortgage) : null));
+  const propValue = properties.map((p) => p.value);   // a home still to buy: its price, growing until bought
+  const owned = properties.map((p) => p.buyAtAge === undefined || p.buyAtAge <= prep.startAge0);
+  const mort: (MortgageState | null)[] = properties.map((p, pi) => (owned[pi] && p.mortgage && p.mortgage.balance > 0 ? initialMortgageState(p.mortgage) : null));
+  // Rent with no end age stops when a main home is bought.
+  const firstPurchaseAge = Math.min(...properties.filter((p) => p.isMainResidence && p.buyAtAge !== undefined && p.buyAtAge > prep.startAge0).map((p) => p.buyAtAge as number));
   const pendingLump = properties.map(() => 0);
   const downsized = properties.map(() => false);
   const lisaOpen = accounts.map((a) => a.type === 'lisa' && a.balance > 0);   // a LISA with money in it is already open
@@ -285,7 +295,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
 
     // Income
     let rentTotal = 0;
-    for (const p of properties) rentTotal += rentNominal(p, index);
+    properties.forEach((p, pi) => { if (owned[pi]) rentTotal += rentNominal(p, index); });
     for (let i = 0; i < nP; i++) {
       salary[i] = grossSalary(people[i], ages[i], t, index);
       statePension[i] = ages[i] >= prep.spStartAge[i] ? prep.spEntitlementToday[i] * spIndex : 0;
@@ -310,7 +320,20 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     let lumpSums = 0;
     let propertyCosts = 0;
     let downsizeShortfall = 0;
+    let homePurchase = 0;
+    let lisaHomeOk = false;
     properties.forEach((p, pi) => {
+      if (!owned[pi]) {
+        if (p.buyAtAge === undefined || age0 < p.buyAtAge) return;
+        // Buying now: the deposit, stamp duty and fees come from savings; the rest is the new mortgage.
+        owned[pi] = true;
+        const price = propValue[pi];
+        const deposit = price * Math.min(1, Math.max(0, p.depositPct ?? 1));
+        homePurchase += deposit + stampDuty(price, p.firstTimeBuyer === true, cfg.stampDuty) + (p.buyingCosts ?? 0) * index;
+        if (p.firstTimeBuyer && p.isMainResidence && price <= cfg.lisa.homePriceCap) lisaHomeOk = true;
+        const loan = price - deposit;
+        if (p.mortgage && loan > 0) mort[pi] = initialMortgageState({ ...p.mortgage, balance: loan });
+      }
       const d = p.downsize;
       if (d && p.isMainResidence && !downsized[pi] && age0 >= d.atAge) {
         downsized[pi] = true;
@@ -335,6 +358,14 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       }
       propertyCosts += runningCostsNominal(p, index, downsized[pi], propValue[pi]) * frac;
     });
+    // Rent on a home and one-off costs: paid on top of the spending plan, like a mortgage.
+    let rentPaid = 0;
+    for (const r of scenario.rentPaid ?? []) {
+      if (age0 < (r.fromAge ?? 0) || age0 >= (r.untilAge ?? firstPurchaseAge)) continue;
+      rentPaid += r.monthly * MONTHS_PER_YEAR * index * Math.pow(1 + r.growthRealPct, t) * frac;
+    }
+    let oneOffCosts = 0;
+    for (const o of scenario.oneOffCosts ?? []) if (oneOffDue(o, age0)) oneOffCosts += o.amount * (o.inflationLinked ? index : 1);
 
     // Contributions (start of year, before returns)
     const personYears: PersonYear[] = people.map((_, i) => ({ age: ages[i], grossSalary: salary[i], mpaaTriggered: ws.mpaaTriggered[i], otherTaxableIncome: statePension[i] + taxableStreams[i] + rentShare }));
@@ -419,7 +450,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     const retired = age0 >= people[0].retirementAge;
     const W = targetSpend({
       strategy: scenario.strategy,
-      phaseSpendToday: phaseSpend(scenario.spending, age0) * spendMultiplier,
+      phaseSpendToday: plannedSpendToday(scenario.spending, age0, prep.startAge0, index) * spendMultiplier,
       inflationIndex: index,
       retired,
       portfolioAtStart,
@@ -429,10 +460,19 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
     if (retired) prevW = W;
     const spend = W * frac;   // the strategy works in whole years; the first year spends its share
 
+    // A first-time buyer's LISA goes towards the deposit first (no charge within the price cap).
+    let lisaForHome = 0;
+    if (homePurchase > 0 && lisaHomeOk) {
+      accounts.forEach((acc, a) => {
+        if (acc.type !== 'lisa') return;
+        const take = Math.min(balances[a], homePurchase - lisaForHome);
+        balances[a] -= take; lisaForHome += take;
+      });
+    }
     let inflows = rentTotal;
     for (let i = 0; i < nP; i++) inflows += salary[i] + statePension[i] + taxableStreams[i] + otherStreams[i];
     const need = householdNeed({
-      targetSpend: spend, mortgagePayments, mortgageLumpSums: lumpSums, propertyCosts, otherOutgoings: downsizeShortfall,
+      targetSpend: spend, mortgagePayments, mortgageLumpSums: lumpSums, propertyCosts, rentPaid, oneOffCosts, otherOutgoings: downsizeShortfall + homePurchase - lisaForHome,
       taxes: baselineTax, contributionsFromTakeHome: plan.fromTakeHome, inflows,
     });
 
@@ -502,7 +542,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       const gains = people.map(() => 0);
       const deferCtx = { ...wctx, deferTax: true };
       // Baseline income tax and NI are paid as they go (PAYE-style); only the extra is settled at year end.
-      const regular = (spend + propertyCosts + plan.fromTakeHome + baselineTax - inflows) / months;
+      const regular = (spend + propertyCosts + rentPaid + plan.fromTakeHome + baselineTax - inflows) / months;
       const creditM = plan.credits.map((c) => c / months);
       const firstMonth = MONTHS_PER_YEAR - months;   // a part year runs its last `months` months
       const nA = accounts.length;
@@ -522,7 +562,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         }
         mortgagePayments += mortgageMonth;
         for (let a = 0; a < nA; a++) { bal[a] += creditM[a]; creditGiaBasis(a, creditM[a]); }
-        const needM = regular + mortgageMonth + (k === firstMonth ? lumpSums + downsizeShortfall : 0);
+        const needM = regular + mortgageMonth + (k === firstMonth ? lumpSums + downsizeShortfall + oneOffCosts + homePurchase - lisaForHome : 0);
         if (needM <= 0) {
           routeSurplus(-needM, bal);
         } else {
@@ -602,6 +642,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
 
     if (record) {
       const mortgageBalanceEnd = mort.reduce((s, m) => s + (m?.balance ?? 0), 0) + pendingLump.reduce((s, v) => s + v, 0);
+      draws.lisa += lisaForHome;
       record({
         t, index, indexEnd,
         salary: salary.reduce((s, v) => s + v, 0),
@@ -610,6 +651,9 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         rental: rentTotal,
         draws,
         spending: spend,
+        rentPaid,
+        oneOffCosts,
+        homePurchase,
         months,
         mortgagePayments: mortgagePayments + lumpSums,
         mortgageInterest,
@@ -620,7 +664,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
         savedFromPay: plan.fromTakeHome,
         spareIncome,
         portfolioEnd: nextBalances.reduce((s, v) => s + v, 0),
-        propertyEquityEnd: propValue.reduce((s, v) => s + v, 0) - mortgageBalanceEnd,
+        propertyEquityEnd: propValue.reduce((s, v, pi) => s + (owned[pi] ? v : 0), 0) - mortgageBalanceEnd,
         mortgageBalanceEnd,
       });
     }
@@ -766,6 +810,9 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
           mortgagePayments: y.mortgagePayments / y.index,
           mortgageInterest: y.mortgageInterest / y.index,
           propertyCosts: y.propertyCosts / y.index,
+          rentPaid: y.rentPaid / y.index,
+          oneOffCosts: y.oneOffCosts / y.index,
+          homePurchase: y.homePurchase / y.index,
           taxPaid: (y.incomeTax + y.cgt) / y.index,
           niPaid: y.ni / y.index,
           savedFromPay: y.savedFromPay / y.index,

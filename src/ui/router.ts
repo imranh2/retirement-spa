@@ -5,7 +5,7 @@ export const TABS = [
   { id: 'people', label: 'People & Income' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'contributions', label: 'Contributions' },
-  { id: 'property', label: 'Property & Mortgage' },
+  { id: 'property', label: 'Home & Property' },
   { id: 'spending', label: 'Spending & Strategy' },
   { id: 'rules', label: 'Rules & Assumptions' },
   { id: 'results', label: 'Results' },

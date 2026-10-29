@@ -2,7 +2,7 @@
 
 A Monte Carlo retirement planner for UK households. It runs entirely in the browser: nothing is uploaded, and your plan is saved only in this browser's localStorage (keys prefixed `ukplanner.`).
 
-It models income tax, NI and CGT (England/Wales/NI), ISAs, LISAs, GIAs and DC pensions, the State Pension, property and mortgages. Start from a two-minute quick start or an example. It shows the chance your money lasts, how long it lasts, the most you could spend and the earliest age you could stop work, with what-if sliders (including what you could spend if you stopped work at a given age). Every UK rule and market assumption is editable under **Rules & Assumptions**. The defaults are 2026/27 values; check them against gov.uk.
+It models income tax, NI and CGT (England/Wales/NI), ISAs, LISAs, GIAs, Premium Bonds and DC pensions, the State Pension, owning (with a mortgage) or renting, spending that changes with age, and one-off costs. Start from a two-minute quick start or an example. It shows the chance your money lasts, how long it lasts, the most you could spend and the earliest age you could stop work, with what-if sliders (including what you could spend if you stopped work at a given age). Every UK rule and market assumption is editable under **Rules & Assumptions**. The defaults are 2026/27 values; check them against gov.uk.
 
 **This is a modelling tool, not financial advice.**
 

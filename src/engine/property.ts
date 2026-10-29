@@ -1,5 +1,6 @@
 import type { Property } from '../model/types';
 
+
 /**
  * Property value after one year: value * (1 + realDraw + growthAdjustment) * (1 + inflation).
  * `realDraw` is the market property real return; `growthAdjustment` is
@@ -40,3 +41,5 @@ export function downsize(currentValue: number, newValueToday: number, inflationI
 export function propertyEquity(value: number, mortgageBalance: number): number {
   return value - mortgageBalance;
 }
+
+export { stampDuty } from '../model/stampDuty';

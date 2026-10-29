@@ -13,6 +13,7 @@ function copyTaxYear(c: TaxYearConfig): TaxYearConfig {
     cgt: { ...c.cgt },
     isa: { ...c.isa },
     premiumBonds: { ...c.premiumBonds },
+    stampDuty: { ...c.stampDuty },
     lisa: { ...c.lisa },
     pension: { ...c.pension },
   };

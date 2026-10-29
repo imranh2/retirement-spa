@@ -16,6 +16,8 @@ const RELIEF_METHODS: NonNullable<Account['pensionReliefMethod']>[] = ['netPay',
 const MAX_PEOPLE = 2;
 const MAX_RUNS = 100000;
 const MAX_AGE = 120;
+/** Largest yearly change allowed for spending phases and rent (above or below inflation). */
+const MAX_YEARLY_CHANGE = 0.2;
 const ALLOCATION_TOLERANCE = 0.0001;
 /** Minimum rows of history for the block bootstrap (mirrors engine MIN_BOOTSTRAP_YEARS). */
 export const MIN_HISTORY_ROWS = 10;
@@ -130,6 +132,14 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     const pre = `properties[${i}]`;
     nonNeg(`${pre}.value`, p.value, 'Value');
     nonNeg(`${pre}.runningCostsAnnual`, p.runningCostsAnnual, 'Running costs');
+    if (p.buyAtAge !== undefined) {
+      if (!Number.isInteger(p.buyAtAge) || p.buyAtAge > MAX_AGE) add(`${pre}.buyAtAge`, 'Enter a whole-number age');
+      else if (age0Now !== undefined && p.buyAtAge <= age0Now) add(`${pre}.buyAtAge`, `Buying must be after ${isAge(s.people[0]?.name || 'person 1', age0Now)}; a home you own now is entered as owned`);
+      if (p.depositPct === undefined || !finite(p.depositPct) || p.depositPct < 0 || p.depositPct > 1) add(`${pre}.depositPct`, 'Deposit must be between 0% and 100% of the price');
+      else if (p.depositPct < 1 && !p.mortgage) add(`${pre}.depositPct`, 'Add the mortgage that pays the rest of the price, or make the deposit 100%');
+      if (p.buyingCosts !== undefined) nonNeg(`${pre}.buyingCosts`, p.buyingCosts, 'Buying costs');
+      if (p.downsize && Number.isInteger(p.buyAtAge) && p.downsize.atAge <= p.buyAtAge) add(`${pre}.downsize.atAge`, 'Downsizing must come after buying the home');
+    }
     if (p.runningCostsPctOfValue !== undefined && (!finite(p.runningCostsPctOfValue) || p.runningCostsPctOfValue < 0 || p.runningCostsPctOfValue > MAX_RUNNING_COST_PCT)) add(`${pre}.runningCostsPctOfValue`, 'Must be between 0% and 10% of the home’s value');
     if (p.rentalIncomeAnnual !== undefined) nonNeg(`${pre}.rentalIncomeAnnual`, p.rentalIncomeAnnual, 'Rent');
     if (!finite(p.growthRealPct) || p.growthRealPct < -0.5 || p.growthRealPct > 0.5) add(`${pre}.growthRealPct`, 'Growth must be between -50% and 50%');
@@ -176,6 +186,24 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     nonNeg(`spending[${i}].annualSpend`, ph.annualSpend, 'Spending');
     if (!Number.isInteger(ph.fromAge)) add(`spending[${i}].fromAge`, 'Enter a whole-number age');
     else if (i > 0 && ph.fromAge <= s.spending[i - 1].fromAge) add(`spending[${i}].fromAge`, 'Phases must be in ascending order of age');
+    if (ph.changePct !== undefined && (!finite(ph.changePct) || ph.changePct < -MAX_YEARLY_CHANGE || ph.changePct > MAX_YEARLY_CHANGE)) add(`spending[${i}].changePct`, 'Yearly change must be between -20% and 20%');
+  });
+  const wholeAge = (path: string, v: number | undefined) => { if (v !== undefined && (!Number.isInteger(v) || v < 0 || v > MAX_AGE)) add(path, 'Enter a whole-number age from 0 to 120'); };
+  (s.oneOffCosts ?? []).forEach((o, i) => {
+    const pre = `oneOffCosts[${i}]`;
+    nonNeg(`${pre}.amount`, o.amount, 'Amount');
+    wholeAge(`${pre}.atAge`, o.atAge);
+    wholeAge(`${pre}.untilAge`, o.untilAge);
+    if (o.everyYears !== undefined && (!Number.isInteger(o.everyYears) || o.everyYears < 1)) add(`${pre}.everyYears`, 'Repeat every whole number of years (1 or more), or leave blank for once');
+    if (o.untilAge !== undefined && Number.isInteger(o.untilAge) && o.untilAge <= o.atAge) add(`${pre}.untilAge`, 'Must be after the first age');
+  });
+  (s.rentPaid ?? []).forEach((r, i) => {
+    const pre = `rentPaid[${i}]`;
+    nonNeg(`${pre}.monthly`, r.monthly, 'Rent');
+    if (!finite(r.growthRealPct) || r.growthRealPct < -MAX_YEARLY_CHANGE || r.growthRealPct > MAX_YEARLY_CHANGE) add(`${pre}.growthRealPct`, 'Yearly rise must be between -20% and 20%');
+    wholeAge(`${pre}.fromAge`, r.fromAge);
+    wholeAge(`${pre}.untilAge`, r.untilAge);
+    if (r.untilAge !== undefined && r.untilAge <= (r.fromAge ?? 0)) add(`${pre}.untilAge`, 'Must be after the age rent starts');
   });
   const p0 = s.people[0];
   if (p0 && startOk && isIsoDate(p0.dateOfBirth) && s.spending.length > 0) {

@@ -3,7 +3,7 @@ import type { Store } from './store';
 import { ageAt, isIsoDate, todayIso } from '../model/dates';
 import { CASH, sim } from './exampleScenarios';
 import { h, confirmButton } from './dom';
-import { numberField, selectField, textField } from './fields';
+import { checkboxField, numberField, selectField, textField } from './fields';
 
 /** How the ISA, GIA and pension are invested. */
 export const QUICK_MIXES = {
@@ -18,6 +18,7 @@ export type QuickMix = keyof typeof QUICK_MIXES;
 export interface QuickStartInput {
   dateOfBirth: string;
   salary: number;
+  payRisePct: number;          // yearly pay rise in pounds (pay is not assumed to keep up with inflation)
   stopWorkAge: number;
   spending: number;
   leftover: 'spend' | 'cash' | 'invest';
@@ -30,6 +31,12 @@ export interface QuickStartInput {
   pensionPct: number;          // your contribution, gross, share of salary
   employerPct: number;
   isaMonthly: number;
+  housing: 'own' | 'rent' | 'rentThenBuy' | 'neither';
+  rentMonthly: number;         // today's money, if renting
+  buyAtAge: number;            // rentThenBuy: age you plan to buy
+  buyPrice: number;            // rentThenBuy: price in today's money
+  depositPct: number;
+  firstTimeBuyer: boolean;
   homeValue: number;
   homeCostsPct: number;        // upkeep, insurance and similar, as a share of the home's value each year
   mortgageBalance: number;
@@ -48,9 +55,10 @@ export interface QuickStartInput {
 /** Starting answers. The date of birth is left blank so nobody builds a plan on a made-up one. */
 export function quickStartDefaults(): QuickStartInput {
   return {
-    dateOfBirth: '', salary: 40000, stopWorkAge: 67, spending: 25000, leftover: 'spend',
+    dateOfBirth: '', salary: 40000, payRisePct: 0, stopWorkAge: 67, spending: 25000, leftover: 'spend',
     cash: 10000, premiumBonds: 0, isa: 0, gia: 0, pension: 60000, pensionType: 'workplace',
     pensionPct: 0.05, employerPct: 0.03, isaMonthly: 0,
+    housing: 'own', rentMonthly: 0, buyAtAge: 0, buyPrice: 0, depositPct: 0.1, firstTimeBuyer: true,
     homeValue: 0, homeCostsPct: 0.01, mortgageBalance: 0, mortgageYears: 0, mortgageRate: 0.045, mortgageFixedYears: 2, mortgageRateAfterFix: null,
     mix: 'growth', feePct: 0.003, feeFixed: 0, niYears: null, lumpSum: 0, lumpSumAge: null,
   };
@@ -62,6 +70,10 @@ const FULL_NI_YEARS = 35;
 const NO_END_AGE = 120;
 /** More runs than the examples: steadier figures for a plan people will act on. */
 const QUICK_START_RUNS = 10000;
+/** Legal, survey and moving fees assumed when buying a home (today's money); stamp duty is worked out. */
+const QUICK_BUYING_COSTS = 3000;
+/** Mortgage term for a home bought later, when none is given. */
+const DEFAULT_NEW_TERM = 25;
 
 /** A whole scenario from the quick-start answers: one person, the accounts they have, and their home. */
 export function quickStartScenario(q: QuickStartInput, startDate: string = todayIso(), bondLimit = Number.POSITIVE_INFINITY): Scenario {
@@ -92,7 +104,20 @@ export function quickStartScenario(q: QuickStartInput, startDate: string = today
   }
 
   // A mortgage without a home value still needs a home to hang on: assume it is worth the mortgage.
-  const properties: Property[] = q.homeValue > 0 || q.mortgageBalance > 0 ? [{
+  const owns = q.housing === 'own';
+  const term = Math.max(1, q.mortgageYears || (q.housing === 'rentThenBuy' ? DEFAULT_NEW_TERM : 1));
+  const loanTerms = {
+    type: 'repayment' as const, rate: q.mortgageRate, fixedYearsRemaining: Math.min(q.mortgageFixedYears, term),
+    reversionRate: q.mortgageRateAfterFix ?? q.mortgageRate, termYearsRemaining: term, monthlyOverpayment: 0,
+  };
+  // Renting now and buying later: the home is bought at that age, with a deposit and a new mortgage.
+  const buying: Property[] = q.housing === 'rentThenBuy' && q.buyPrice > 0 && q.buyAtAge > age ? [{
+    id: 'home', name: 'Home', value: q.buyPrice, growthRealPct: 0, isMainResidence: true, runningCostsAnnual: 0,
+    ...(q.homeCostsPct > 0 ? { runningCostsPctOfValue: q.homeCostsPct } : {}),
+    buyAtAge: q.buyAtAge, depositPct: q.depositPct, buyingCosts: QUICK_BUYING_COSTS, firstTimeBuyer: q.firstTimeBuyer,
+    ...(q.depositPct < 1 ? { mortgage: { balance: 0, ...loanTerms } } : {}),
+  }] : [];
+  const properties: Property[] = buying.length ? buying : owns && (q.homeValue > 0 || q.mortgageBalance > 0) ? [{
     id: 'home', name: 'Home', value: Math.max(q.homeValue, q.mortgageBalance), growthRealPct: 0, isMainResidence: true,
     runningCostsAnnual: 0, ...(q.homeCostsPct > 0 ? { runningCostsPctOfValue: q.homeCostsPct } : {}),
     mortgage: q.mortgageBalance > 0 ? {
@@ -105,11 +130,13 @@ export function quickStartScenario(q: QuickStartInput, startDate: string = today
   const order: AccountType[] = ['cash', 'gia', 'isa', 'dcPension', 'premiumBonds'];
   return {
     people: [{
-      name: 'You', dateOfBirth: q.dateOfBirth, salary: q.salary, salaryGrowthRealPct: 0,
+      name: 'You', dateOfBirth: q.dateOfBirth, salary: q.salary, salaryGrowthRealPct: q.payRisePct, salaryInflationLinked: false,
       retirementAge: q.salary > 0 ? q.stopWorkAge : Math.min(q.stopWorkAge, age),
       niQualifyingYears: q.niYears ?? Math.min(FULL_NI_YEARS, Math.max(0, age - NI_START_AGE)),
     }],
     accounts, contributions, properties, incomeStreams: [],
+    // Rent with no end age stops when the home is bought.
+    ...((q.housing === 'rent' || q.housing === 'rentThenBuy') && q.rentMonthly > 0 ? { rentPaid: [{ id: 'rent', name: 'Rent', monthly: q.rentMonthly, growthRealPct: 0 }] } : {}),
     spending: [{ fromAge: 0, annualSpend: q.spending }],
     strategy: { kind: 'fixedReal' },
     withdrawalOrder: order.filter((t) => accounts.some((a) => a.type === t)),
@@ -144,14 +171,47 @@ export function quickStartSection(store: Store, open: boolean, rerender: () => v
     rerender();
   };
   const group = (title: string, ...fields: HTMLElement[]) => h('fieldset', { class: 'quick-group' }, h('legend', {}, title), h('div', { class: 'grid' }, ...fields));
+  /** Home: own (value, upkeep, mortgage), rent (monthly rent), or neither; the fields follow the choice. */
+  const homeGroup = (): HTMLElement => {
+    const fields = h('div', { class: 'grid' });
+    const fill = () => fields.replaceChildren(
+      selectField({ label: 'Your home', value: answers.housing,
+        options: [{ value: 'own', label: 'I own it (or am buying it)' }, { value: 'rent', label: 'I rent it' }, { value: 'rentThenBuy', label: 'I rent now and plan to buy' }, { value: 'neither', label: 'Neither (e.g. living with family)' }],
+        onChange: (v) => { answers.housing = v; fill(); } }),
+      ...(answers.housing === 'rent' ? [
+        money('rentMonthly', 'Rent', 'In today’s money. It rises with inflation; change that, or add a later move, under Home & Property.', 'gbpMonth'),
+      ] : answers.housing === 'rentThenBuy' ? [
+        money('rentMonthly', 'Rent until you buy', 'In today’s money, rising with inflation. It stops when you buy.', 'gbpMonth'),
+        numberField({ label: 'Buy at age', unit: 'age', min: 16, max: 100, step: 1, value: answers.buyAtAge || null, nullable: true, onChange: (v) => { answers.buyAtAge = v ?? 0; } }),
+        money('buyPrice', 'Price', 'In today’s money: house prices are assumed to rise with inflation until you buy.'),
+        pct('depositPct', 'Deposit', 'Share of the price you pay up front, from your savings (a LISA first, if you have one). Stamp duty and about £3,000 of fees are added.', 0.01),
+        checkboxField({ label: 'First-time buyer', checked: answers.firstTimeBuyer, help: 'Lower stamp duty, and a LISA can go towards the deposit.', onChange: (v) => { answers.firstTimeBuyer = v; } }),
+        pct('homeCostsPct', 'Upkeep and running costs once bought', 'A year, as a share of the home’s value. 1% is a common rule of thumb.', 0.001),
+        numberField({ label: 'Mortgage term', unit: 'years', min: 1, max: 40, step: 1, value: answers.mortgageYears || null, nullable: true, placeholder: '25', onChange: (v) => { answers.mortgageYears = v ?? 25; } }),
+        pct('mortgageRate', 'Mortgage rate', 'A repayment mortgage is assumed; change it under Home & Property.', 0.0005),
+        numberField({ label: 'Fixed for', unit: 'years', min: 0, max: 40, step: 1, value: answers.mortgageFixedYears, onChange: set('mortgageFixedYears') }),
+        optional('mortgageRateAfterFix', 'Rate after the fix', 'pct', 'same as now', 'Blank assumes you remortgage at about the same rate.'),
+      ] : answers.housing === 'own' ? [
+        money('homeValue', 'Home value'),
+        pct('homeCostsPct', 'Upkeep and running costs', 'A year, as a share of the home’s value: repairs, insurance, service charges. 1% is a common rule of thumb.', 0.001),
+        money('mortgageBalance', 'Mortgage left to pay'),
+        numberField({ label: 'Mortgage years left', unit: 'years', min: 0, max: 40, step: 1, value: answers.mortgageYears, onChange: set('mortgageYears') }),
+        pct('mortgageRate', 'Mortgage rate now', 'A repayment mortgage is assumed; change it under Home & Property.', 0.0005),
+        numberField({ label: 'Years left on the fixed rate', unit: 'years', min: 0, max: 40, step: 1, value: answers.mortgageFixedYears, help: '0 if it is not fixed.', onChange: set('mortgageFixedYears') }),
+        optional('mortgageRateAfterFix', 'Rate after the fix', 'pct', 'same as now', 'Blank assumes you remortgage at about the same rate. Enter your lender’s standard variable rate to be cautious.'),
+      ] : []));
+    fill();
+    return h('fieldset', { class: 'quick-group' }, h('legend', {}, 'Home'), fields);
+  };
   return h('details', { class: 'panel-section quick-start', id: 'quickstart', open },
     h('summary', {}, h('h3', {}, 'Start with your own numbers'), h('span', { class: 'muted' }, ' — about two minutes')),
     h('p', { class: 'muted' }, 'Answer a few questions and we build a plan for one person. Amounts are in today’s money; leave anything you don’t have at 0. You can add a partner, more accounts and details on the tabs afterwards.'),
     group('You',
       textField({ label: 'Date of birth', type: 'date', value: answers.dateOfBirth, help: 'Sets your State Pension age and when you can use your pension.', onChange: (v) => { answers.dateOfBirth = v; error.hidden = true; } }),
       money('salary', 'Salary (gross, per year)', 'Before tax. 0 if you are not working.'),
+      pct('payRisePct', 'Pay rise each year', 'In pounds. Pay rises are not guaranteed, so 0% (the default) is cautious: your pay stays the same while prices rise. Around 2.5% would keep pace with inflation.', 0.005),
       numberField({ label: 'Stop work at', unit: 'age', min: 16, max: 100, step: 1, value: answers.stopWorkAge, help: 'When your salary and contributions stop.', onChange: set('stopWorkAge') }),
-      money('spending', 'Living costs per year', 'Everything except mortgage payments and home running costs, which go below.'),
+      money('spending', 'Living costs per year', 'Everything except rent, mortgage payments and home running costs, which go below.'),
       selectField({ label: 'Money left over each year', value: answers.leftover,
         help: 'In years when income is more than you spend, pay and save. Most people spend it, so the cautious choice is to assume that.',
         options: [{ value: 'spend', label: 'It gets spent' }, { value: 'cash', label: 'I keep it as cash' }, { value: 'invest', label: 'I invest it (ISA, then GIA)' }],
@@ -170,14 +230,7 @@ export function quickStartSection(store: Store, open: boolean, rerender: () => v
       pct('pensionPct', 'Your pension contribution', 'Share of salary, including tax relief.'),
       pct('employerPct', 'Employer pension contribution'),
       money('isaMonthly', 'Into your ISA', undefined, 'gbpMonth')),
-    group('Home (optional)',
-      money('homeValue', 'Home value'),
-      pct('homeCostsPct', 'Upkeep and running costs', 'A year, as a share of the home’s value: repairs, insurance, service charges. 1% is a common rule of thumb.', 0.001),
-      money('mortgageBalance', 'Mortgage left to pay'),
-      numberField({ label: 'Mortgage years left', unit: 'years', min: 0, max: 40, step: 1, value: answers.mortgageYears, onChange: set('mortgageYears') }),
-      pct('mortgageRate', 'Mortgage rate now', 'A repayment mortgage is assumed; change it under Property & Mortgage.', 0.0005),
-      numberField({ label: 'Years left on the fixed rate', unit: 'years', min: 0, max: 40, step: 1, value: answers.mortgageFixedYears, help: '0 if it is not fixed.', onChange: set('mortgageFixedYears') }),
-      optional('mortgageRateAfterFix', 'Rate after the fix', 'pct', 'same as now', 'Blank assumes you remortgage at about the same rate. Enter your lender’s standard variable rate to be cautious.')),
+    homeGroup(),
     h('details', { class: 'quick-more' },
       h('summary', {}, 'More details (optional)'),
       group('Investments',
