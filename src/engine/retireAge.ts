@@ -1,6 +1,6 @@
 import type { Scenario } from '../model/types';
 import type { ConfigBundle } from '../config/configTypes';
-import { currentAges, withRetirementAge, type RetireAgeOutcome } from '../model/retirement';
+import { canChooseStopWork, currentAges, withRetirementAge, type RetireAgeOutcome } from '../model/retirement';
 import type { SimulateFn } from './stats';
 
 /** Runs per simulation in the search (the same seed every time: common random numbers). */
@@ -17,7 +17,7 @@ export function* earliestRetirementSteps(scenario: Scenario, config: ConfigBundl
   const now = currentAges(scenario)[0];
   const latest = scenario.sim.horizonAge - 1;
   const base = { targetSuccessRate: target, latestTried: latest };
-  if (scenario.people[0].retirementAge <= now) return { ...base, status: 'notWorking' };
+  if (!canChooseStopWork(scenario)) return { ...base, status: 'notWorking' };
 
   const runs = Math.min(scenario.sim.runs, RETIRE_SEARCH_RUNS);
   const rate = (age: number) => deps.simulate(withRetirementAge(scenario, age), config, { spendMultiplier: 1, runsOverride: runs, successOnly: true }).successRate;

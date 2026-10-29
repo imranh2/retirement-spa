@@ -235,6 +235,14 @@
       details.quick-start { border-color: var(--accent); }
       .quick-group { border: 1px solid var(--border); border-radius: var(--radius); padding: .5rem 1rem 1rem; margin: 0 0 1rem; }
       .quick-group > legend { font-weight: 600; padding: 0 .35rem; }
+      .seg { display: inline-flex; }
+      .seg .btn { border-radius: 0; }
+      .seg .btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+      .seg .btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+      .seg .btn[aria-checked="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+      .quick-more { margin: 0 0 1rem; }
+      .quick-more > summary { cursor: pointer; font-weight: 600; margin-bottom: .75rem; }
+      .tax-year-note { margin: .25rem 0 0; }
       .jump-links { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin: -.25rem 0 1rem; font-size: .95rem; }
       #summary, #whatif, #charts, #year-by-year, #quickstart, #simulation { scroll-margin-top: 1rem; }
       details.config-section:not([open]) { padding-bottom: 1rem; }

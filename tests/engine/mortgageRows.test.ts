@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { simulate } from '../../src/engine/simulate';
 import { initialMortgageState, scheduleYear } from '../../src/engine/mortgage';
-import { zeroWorldConfig } from '../fixtures/testConfig';
+import { TEST_CONFIG, zeroWorldConfig } from '../fixtures/testConfig';
 import { cashOnlyScenario } from '../fixtures/testScenarios';
 import type { Mortgage, Scenario } from '../../src/model/types';
 
@@ -33,5 +33,16 @@ describe('mortgage in the year-by-year table', () => {
     const rows = simulate(withMortgage(30_000), zeroWorldConfig(), { runsOverride: 1 }).centralCase;
     expect(rows.length).toBeLessThan(5);
     expect(rows[rows.length - 1].mortgageBalanceEnd).toBeGreaterThan(150_000);
+  });
+  it('in actual pounds, a fixed-rate payment is the same every year until the fix ends', () => {
+    // With 2.5% inflation the table's today's-money figures shrink; priceIndex turns them back into pounds.
+    const s = withMortgage(2_000_000);
+    s.properties[0].mortgage = { ...MORTGAGE, fixedYearsRemaining: 5, reversionRate: 0.07 };
+    const rows = simulate(s, TEST_CONFIG, { runsOverride: 1 }).centralCase;
+    const actual = rows.slice(0, 7).map((r) => r.mortgagePayments * r.priceIndex!);
+    for (let t = 1; t < 5; t++) expect(actual[t]).toBeCloseTo(actual[0], 6);
+    expect(actual[5]).toBeGreaterThan(actual[4] + 1_000);       // recalculated at 7% once the fix ends
+    expect(actual[6]).toBeCloseTo(actual[5], 6);
+    expect(rows[1].mortgagePayments).toBeLessThan(rows[0].mortgagePayments);   // today's money shrinks
   });
 });

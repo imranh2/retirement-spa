@@ -63,3 +63,12 @@ describe('what can I spend if I stop work at a given age', () => {
     expect(spend).toBeGreaterThan(750_000 / 21 - 0.01 * 30_000);
   });
 });
+
+describe('stop-work age set to the current age', () => {
+  it('still searches when person 1 has a salary', () => {
+    // Stopping at 40 (now) falls short, so the search finds the hand-checked 53, as for a later plan.
+    const s = withRetirementAge(worker(), 40);
+    expect(s.people[0].retirementAge).toBe(40);
+    expect(run(s)).toMatchObject({ status: 'found', age: 53 });
+  });
+});

@@ -1,7 +1,7 @@
 import type { Scenario, SimulationResult } from '../model/types';
 import type { MaxSpendValue, QuickResult } from '../model/workerMessages';
 import type { Store } from './store';
-import { withRetirementAge } from '../model/retirement';
+import { canChooseStopWork, withRetirementAge } from '../model/retirement';
 import { h, uid } from './dom';
 import { formatMoney, formatPct } from './format';
 import { lastsLabel, moneyLastsUntil } from './longevity';
@@ -25,11 +25,6 @@ const ui: {
   spendKey?: string; spendAt?: MaxSpendValue; spendTimer?: ReturnType<typeof setTimeout>;
 } = { spendPct: FULL_PCT, replaceCount: -1 };
 
-/** Whether person 1 still has a stop-work age ahead of them. */
-function isWorking(s: Scenario, ageNow: number): boolean {
-  return (s.people[0]?.retirementAge ?? 0) > ageNow;
-}
-
 /** The scenario with the slider changes applied (retirement age, spending scaled). */
 export function whatIfScenario(s: Scenario, retireAt: number | undefined, spendPct: number): Scenario {
   const retired = retireAt === undefined ? s : withRetirementAge(s, retireAt);
@@ -47,8 +42,9 @@ export function whatIfPanel(store: Store, base: SimulationResult): HTMLElement {
   const s = st.scenario;
   if (ui.replaceCount !== store.replaceCount) { ui.retireAt = undefined; ui.spendPct = FULL_PCT; ui.result = undefined; ui.key = undefined; ui.spendAt = undefined; ui.spendKey = undefined; ui.replaceCount = store.replaceCount; }
   const ageNow = base.ages[0] ?? 0;
-  const working = isWorking(s, ageNow);
-  const planned = s.people[0]?.retirementAge ?? ageNow;
+  const working = canChooseStopWork(s);
+  // A stop-work age already reached means stopping now.
+  const planned = Math.max(s.people[0]?.retirementAge ?? ageNow, ageNow);
   const latest = s.sim.horizonAge - 1;
   const retireAt = working ? Math.min(Math.max(ui.retireAt ?? planned, ageNow), latest) : undefined;
   const target = s.sim.targetSuccessRate;

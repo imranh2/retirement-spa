@@ -4,7 +4,7 @@ import type { Store } from './store';
 import { h, confirmButton } from './dom';
 import { numberField, textField, selectField, checkboxField, errorSlot } from './fields';
 import { formatMoney, formatPct, toPercentInput } from './format';
-import { ageAt, isIsoDate } from '../model/dates';
+import { ageAt, isIsoDate, taxYearLabel, taxYearStartYearOf } from '../model/dates';
 import { defaultStatePensionStartAge, minimumPensionAccessAge, statePensionAge } from '../model/ageRules';
 import { ACCOUNT_TYPES, MIN_HISTORY_ROWS, SURPLUS_ACCOUNT_TYPES } from '../model/validateScenario';
 import { EXAMPLE_SCENARIOS } from './exampleScenarios';
@@ -35,6 +35,54 @@ function personOptions(s: Scenario) {
 function startAge(s: Scenario, i: number): number | undefined {
   const p = s.people[i];
   return p && isIsoDate(p.dateOfBirth) && isIsoDate(s.sim.startDate) ? ageAt(p.dateOfBirth, s.sim.startDate) : undefined;
+}
+
+/**
+ * The tax year in which a person is `age`, as the model counts it: the plan's first year is the
+ * tax year of its start date, and each person is a year older in each following year.
+ */
+function taxYearAt(s: Scenario, personIndex: number, age: number): string | undefined {
+  const now = startAge(s, personIndex);
+  if (now === undefined || !Number.isFinite(age) || age < now) return undefined;
+  return taxYearLabel(taxYearStartYearOf(s.sim.startDate) + (age - now));
+}
+
+/**
+ * Show which tax year an age field means, under the field, kept up to date as it is typed.
+ * `kind`: 'from' (the first year it applies), 'until' (an exclusive end: the last year is the one before).
+ */
+function withTaxYear(c: TabCtx, el: HTMLElement, personIndex: number, kind: 'from' | 'until', blank: string): HTMLElement {
+  const input = el.querySelector('input');
+  if (!input) return el;
+  const note = h('p', { class: 'muted small tax-year-note', 'aria-live': 'polite' });
+  const update = () => {
+    const raw = input.value.trim();
+    const s = sc(c);
+    if (raw === '') { note.textContent = blank; return; }
+    const age = Number(raw);
+    const year = taxYearAt(s, personIndex, kind === 'until' ? age - 1 : age);
+    note.textContent = year === undefined ? (kind === 'until' ? 'Already ended: none in this plan' : 'Already started') : kind === 'until' ? `Last tax year: ${year}` : `From tax year ${year}`;
+  };
+  input.addEventListener('input', update);
+  update();
+  el.append(note);
+  return el;
+}
+
+/**
+ * A start age where the past means "already happening": shown blank ("now") at or before the
+ * person's current age, so nobody has to enter an age they have passed. Blank stores 0 (has
+ * started), or for a one-off payment the current age (paid this year).
+ */
+function startAgeField(c: TabCtx, path: string, value: number, personIndex: number, o: { label: string; help: string; lumpSum: boolean }): HTMLElement {
+  const ageNow = startAge(sc(c), personIndex);
+  const started = ageNow !== undefined && (o.lumpSum ? value === ageNow : value <= ageNow);
+  const thisYear = taxYearAt(sc(c), personIndex, ageNow ?? 0);
+  return withTaxYear(c, numberField({
+    label: o.label, unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: started ? null : value,
+    placeholder: ageNow !== undefined ? `now (${ageNow})` : 'now', errorPath: path, help: o.help,
+    onChange: (v) => setS(c, path, v ?? (o.lumpSum ? ageNow ?? 0 : 0)),
+  }), personIndex, 'from', o.lumpSum ? `This tax year${thisYear ? ` (${thisYear})` : ''}` : 'Already started');
 }
 
 /** A list of editable cards with add and remove controls. */
@@ -213,7 +261,7 @@ function personFields(c: TabCtx, p: Person, i: number): Node[] {
     textField({ label: 'Date of birth', type: 'date', value: p.dateOfBirth, errorPath: `${pre}.dateOfBirth`, onChange: (v) => setS(c, `${pre}.dateOfBirth`, v) }),
     numberField({ label: 'Salary (gross, per year)', unit: 'gbp', min: 0, step: 100, value: p.salary, errorPath: `${pre}.salary`, help: 'Gross annual employment income in today’s money. Set 0 if not working.', onChange: (v) => setS(c, `${pre}.salary`, v ?? 0) }),
     numberField({ label: 'Salary growth above inflation', unit: 'pct', step: 0.001, value: p.salaryGrowthRealPct, errorPath: `${pre}.salaryGrowthRealPct`, help: 'Annual pay rise above inflation, e.g. 1%.', onChange: (v) => setS(c, `${pre}.salaryGrowthRealPct`, v ?? 0) }),
-    numberField({ label: 'Stops work at', unit: 'age', min: 0, max: 120, step: 1, value: p.retirementAge, errorPath: `${pre}.retirementAge`, help: 'Salary stops at this age, and so do contributions unless you set them to carry on (Contributions tab). For person 1 this is also when the retirement withdrawal strategy begins.', onChange: (v) => setS(c, `${pre}.retirementAge`, v ?? 0) }),
+    withTaxYear(c, numberField({ label: 'Stops work at', unit: 'age', min: 0, max: 120, step: 1, value: p.retirementAge, errorPath: `${pre}.retirementAge`, help: 'Salary stops at this age, and so do contributions unless you set them to carry on (Contributions tab). For person 1 this is also when the retirement withdrawal strategy begins. Each year of the plan is a whole tax year.', onChange: (v) => setS(c, `${pre}.retirementAge`, v ?? 0) }), i, 'until', ''),
     numberField({ label: 'NI qualifying years so far', unit: 'years', min: 0, max: 60, step: 1, value: p.niQualifyingYears, errorPath: `${pre}.niQualifyingYears`, help: 'From your State Pension forecast on gov.uk. Each future year before State Pension age adds one if you earn at least the lower earnings limit, or get NI credits (see below).', onChange: (v) => setS(c, `${pre}.niQualifyingYears`, v ?? 0) }),
     numberField({ label: 'NI credits or voluntary NI until', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: p.niCreditsUntilAge, placeholder: 'none', errorPath: `${pre}.niCreditsUntilAge`,
       help: 'A future year counts towards the State Pension only if your salary reaches the lower earnings limit. Enter an age here if you will get NI credits until then without earning (e.g. Child Benefit for a child under 12, Carer’s Allowance, Universal Credit) or plan to pay voluntary NI. The cost of voluntary NI is not modelled.',
@@ -256,8 +304,8 @@ function streamFields(c: TabCtx, st: IncomeStream, i: number): Node[] {
     textField({ label: 'Name', value: st.name, errorPath: `${pre}.name`, onChange: (v) => setS(c, `${pre}.name`, v) }),
     markPeople(selectField({ label: 'Paid to', value: String(st.personIndex), options: personOptions(sc(c)), errorPath: `${pre}.personIndex`, onChange: (v) => setS(c, `${pre}.personIndex`, Number(v)) })),
     numberField({ label: 'Amount per year', unit: 'gbp', min: 0, step: 100, value: st.annualAmount, errorPath: `${pre}.annualAmount`, help: 'In today’s money if inflation-linked; otherwise a fixed cash amount.', onChange: (v) => setS(c, `${pre}.annualAmount`, v ?? 0) }),
-    numberField({ label: 'Starts at', unit: 'age', min: 0, max: 120, step: 1, value: st.startAge, errorPath: `${pre}.startAge`, help: 'The recipient’s age when payments start.', onChange: (v) => setS(c, `${pre}.startAge`, v ?? 0) }),
-    numberField({ label: 'Ends at', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: st.endAge, placeholder: 'for life', errorPath: `${pre}.endAge`, help: 'Payments stop at this age (exclusive). Blank means for life.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? undefined) }),
+    startAgeField(c, `${pre}.startAge`, st.startAge, st.personIndex, { label: 'Starts at', lumpSum: false, help: 'Leave blank if it is already being paid. Otherwise the recipient’s age when payments start.' }),
+    withTaxYear(c, numberField({ label: 'Ends at', unit: 'age', nullable: true, min: 0, max: 120, step: 1, value: st.endAge, placeholder: 'for life', errorPath: `${pre}.endAge`, help: 'Payments stop at this age (exclusive). Blank means for life.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? undefined) }), st.personIndex, 'until', 'For life'),
     checkboxField({ label: 'Rises with inflation', checked: st.inflationLinked, onChange: (v) => setS(c, `${pre}.inflationLinked`, v) }),
     checkboxField({ label: 'Taxable as income', checked: st.taxable, onChange: (v) => setS(c, `${pre}.taxable`, v) }),
   ];
@@ -389,11 +437,8 @@ export function renderAccounts(c: TabCtx): HTMLElement {
       id: uniqueId(s.accounts.map((a) => a.id), type), type, name: ACCOUNT_LABEL[type], ownerIndex: 0, balance: 0, allocation: alloc,
       annualFeePct: type === 'premiumBonds' ? 0 : cfg.market.defaultAnnualFeePct[type], ...(type === 'dcPension' ? { pensionReliefMethod: 'netPay' as const } : {}),
     } satisfies Account);
-    if (!s.withdrawalOrder.includes(type)) {
-      // Premium Bonds are as easy to cash in as savings, so draw them straight after cash.
-      const after = type === 'premiumBonds' ? s.withdrawalOrder.indexOf('cash') + 1 : s.withdrawalOrder.length;
-      setS(c, 'withdrawalOrder', [...s.withdrawalOrder.slice(0, after), type, ...s.withdrawalOrder.slice(after)]);
-    }
+    // New types go last; Premium Bonds there act as an emergency reserve, as in the quick start.
+    if (!s.withdrawalOrder.includes(type)) setS(c, 'withdrawalOrder', [...s.withdrawalOrder, type]);
     c.rerender();
   };
   return list(c, {
@@ -444,7 +489,9 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
     numberField({ label: isPct ? 'Percentage of gross salary' : k.type === 'fixedMonthly' ? 'Amount' : 'Amount', unit: isPct ? 'pct' : k.type === 'fixedMonthly' ? 'gbpMonth' : 'gbp', min: 0, step: isPct ? 0.005 : 10, value: k.amount, errorPath: `${pre}.amount`,
       help: acc?.type === 'dcPension' ? 'For pensions, enter the GROSS amount reaching the pot, including tax relief. Your own payments are limited to your salary, or £3,600 a year gross into a relief-at-source pension if you earn less.' : acc?.type === 'lisa' ? 'Amount you pay in; the 25% bonus is added on top.' : 'Paid from take-home pay.',
       onChange: (v) => setS(c, `${pre}.amount`, v ?? 0) }),
-    numberField({ label: k.type === 'lumpSum' ? 'Paid at' : 'From', unit: 'age', min: 0, max: 120, step: 1, value: k.startAge, errorPath: `${pre}.startAge`, help: 'The payer’s age (inclusive).', onChange: (v) => setS(c, `${pre}.startAge`, v ?? 0) }),
+    startAgeField(c, `${pre}.startAge`, k.startAge, k.personIndex, k.type === 'lumpSum'
+      ? { label: 'Paid at', lumpSum: true, help: `${payerName === 'You' ? 'Your' : `${payerName}’s`} age in the tax year the money goes in; it is paid in at the end of that tax year. Blank means this tax year. A one-off payment is only made at its age, so it cannot be in the past: money already paid in belongs in the account’s balance.` }
+      : { label: 'Starts at', lumpSum: false, help: payerName === 'You' ? 'Leave blank if you already pay this. Otherwise your age when payments start.' : `Leave blank if ${payerName} already pays this. Otherwise ${payerName}’s age when payments start.` }),
     k.type === 'lumpSum' ? selectField({ label: 'Paid from', value: k.source ?? 'pay', errorPath: `${pre}.source`,
       help: 'Outside money (an inheritance, a gift, a bonus already received) is added to the account without coming out of your income or other accounts, and is paid at this age even after you stop work. ISA, LISA and pension allowances still apply. For a pension it must be relief at source: you pay in the amount less 20% and the provider adds the rest.',
       options: [{ value: 'pay', label: 'My pay or savings' }, { value: 'external', label: 'Outside money (gift, inheritance…)' }],
@@ -462,7 +509,7 @@ function contributionFields(c: TabCtx, k: Contribution, i: number): Node[] {
         if (v !== 'work' && !(k.endAge > k.startAge && k.endAge < MAX_CONTRIBUTION_AGE)) setS(c, `${pre}.endAge`, payer?.retirementAge ?? k.startAge + 1);
         c.rerender();
       } }),
-    stops === 'work' || outside ? null : numberField({ label: 'Until (not including)', unit: 'age', min: 0, max: 120, step: 1, value: k.endAge, errorPath: `${pre}.endAge`, help: stops === 'age' ? 'Payments also stop when the payer stops work, if that comes first.' : 'Payments carry on after the payer stops work, until this age.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? 0) }),
+    stops === 'work' || outside ? null : withTaxYear(c, numberField({ label: 'Until (not including)', unit: 'age', min: 0, max: 120, step: 1, value: k.endAge, errorPath: `${pre}.endAge`, help: stops === 'age' ? 'Payments also stop when the payer stops work, if that comes first.' : 'Payments carry on after the payer stops work, until this age.', onChange: (v) => setS(c, `${pre}.endAge`, v ?? 0) }), k.personIndex, 'until', ''),
   ].filter((x): x is HTMLElement => x !== null);
   if (!isPct) fields.push(checkboxField({ label: 'Rises with inflation', checked: k.escalatesWithInflation, onChange: (v) => setS(c, `${pre}.escalatesWithInflation`, v) }));
   return fields;
@@ -472,7 +519,7 @@ export function renderContributions(c: TabCtx): HTMLElement {
   const s = sc(c);
   return list(c, {
     title: 'Contributions', path: 'contributions', items: s.contributions,
-    intro: 'Paid at the start of each year, normally until the payer stops work (choose per contribution). ISA + LISA are capped at the ISA allowance (excess goes to a GIA or cash); pensions at the annual allowance (tapered for incomes over £260,000, or the MPAA) and 100% of earnings (at least £3,600 gross with relief at source).',
+    intro: 'Regular payments go in at the start of each tax year, normally until the payer stops work (choose per contribution); one-off lump sums go in at the end of their tax year. ISA + LISA are capped at the ISA allowance (excess goes to a GIA or cash); pensions at the annual allowance (tapered for incomes over £260,000, or the MPAA) and 100% of earnings (at least £3,600 gross with relief at source).',
     heading: (k) => { const a = s.accounts.find((x) => x.id === k.accountId); return `${CONTRIB_LABEL[k.type]} → ${a?.name ?? 'no account'}`; },
     body: (k, i) => contributionFields(c, k, i),
     onAdd: () => {
@@ -621,7 +668,7 @@ export function renderSpending(c: TabCtx): HTMLElement {
       heading: (ph, i) => (i === 0 ? 'From now' : `From age ${ph.fromAge}`),
       body: (ph, i) => [
         // The first phase starts now, so its age is shown only if it needs fixing.
-        ...(i === 0 && ageNow !== undefined && ph.fromAge <= ageNow ? [] : [numberField({ label: 'From age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: ph.fromAge, errorPath: `spending[${i}].fromAge`, onChange: (v) => setS(c, `spending[${i}].fromAge`, v ?? 0) })]),
+        ...(i === 0 && ageNow !== undefined && ph.fromAge <= ageNow ? [] : [withTaxYear(c, numberField({ label: 'From age (person 1)', unit: 'age', min: 0, max: 120, step: 1, value: ph.fromAge, errorPath: `spending[${i}].fromAge`, onChange: (v) => setS(c, `spending[${i}].fromAge`, v ?? 0) }), 0, 'from', '')]),
         numberField({ label: 'Spending per year', unit: 'gbp', min: 0, step: 500, value: ph.annualSpend, errorPath: `spending[${i}].annualSpend`, help: 'Living costs in today’s money. Leave out mortgage payments and property running costs: they are entered under Property and paid on top.', onChange: (v) => setS(c, `spending[${i}].annualSpend`, v ?? 0) }),
       ],
       canRemove: () => s.spending.length > 1,

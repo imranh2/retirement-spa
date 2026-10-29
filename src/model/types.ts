@@ -153,6 +153,8 @@ export interface CentralCaseRow {
   savedFromPay?: number;             // contributions paid from take-home pay (ISA, GIA, cash, personal pension)
   spareIncome?: number;              // income left over after everything; where it goes depends on Scenario.surplus
   portfolioEnd: number; propertyEquityEnd: number; mortgageBalanceEnd: number;
+  /** Price level at the start and end of the year (1 = today), to turn the row into actual pounds. */
+  priceIndex?: number; priceIndexEnd?: number;
 }
 
 export interface SimulationResult {

@@ -1,6 +1,7 @@
 import type { Scenario, SimulationResult } from '../model/types';
 import type { MaxSpendValue, RetireAgeValue } from '../model/workerMessages';
 import { lastsLabel, moneyLastsUntil } from './longevity';
+import { canChooseStopWork, currentAges } from '../model/retirement';
 import { h } from './dom';
 import { formatMoney, formatPct } from './format';
 import { successBand } from './successBand';
@@ -56,7 +57,8 @@ export function retireAgeText(v: RetireAgeValue | undefined, s: Scenario): strin
   switch (v.status) {
     case 'now': return `Now — stopping work today already gives a ${pct} chance`;
     case 'found': {
-      const planned = s.people[0]?.retirementAge;
+      // A stop-work age already reached counts as stopping now.
+      const planned = s.people[0] ? Math.max(s.people[0].retirementAge, currentAges(s)[0]) : undefined;
       const diff = planned !== undefined && v.age !== undefined ? v.age - planned : 0;
       const vsPlan = diff === 0 ? 'your planned age' : `${Math.abs(diff)} year${Math.abs(diff) === 1 ? '' : 's'} ${diff < 0 ? 'earlier' : 'later'} than planned`;
       return `${v.age} (${vsPlan})`;
@@ -80,7 +82,7 @@ export function keyFacts(r: SimulationResult, s: Scenario, retireAge: RetireAgeV
   return h('dl', { class: 'key-facts' },
     fact(`Money lasts (${Math.round(target * 100)}% of futures)`, `to age ${lastsLabel(sure)}`, sure.beyond ? `The money outlasts the plan in at least ${Math.round(target * 100)}% of futures.` : `In ${Math.round((1 - target) * 100)}% of futures it runs out before age ${sure.age + 1}.`),
     fact('Money lasts (typical future)', `to age ${lastsLabel(typical)}`, typical.beyond ? 'Half of futures still have money at the end of the plan.' : 'Half of futures have run out by this age.'),
-    retire !== null || (retirePending && s.people[0] && s.people[0].retirementAge > (r.ages[0] ?? 0))
+    retire !== null || (retirePending && canChooseStopWork(s))
       ? fact(s.people.length > 1 ? `Earliest stop-work age (${who})` : 'Earliest stop-work age', retire ?? 'working it out…', `With planned spending and a ${Math.round(target * 100)}% chance the money lasts.${s.people.length > 1 ? ' The other person’s stop-work age moves by the same number of years.' : ''} Explore it with the What if? sliders.`)
       : null);
 }

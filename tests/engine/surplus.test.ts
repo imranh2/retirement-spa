@@ -134,3 +134,29 @@ describe('one-off lump sums from outside money', () => {
     expect(validateScenario(s, TEST_CONFIG).map((i) => i.path)).toContain('contributions[0].source');
   });
 });
+
+describe('one-off payments at a past age', () => {
+  it('are flagged, since they would never be paid', () => {
+    const s = cashOnlyScenario({ startAge: 40 });
+    s.contributions = [{ id: 'l', accountId: 'cash', personIndex: 0, type: 'lumpSum', amount: 1000, startAge: 39, endAge: 120, escalatesWithInflation: false, source: 'external' }];
+    expect(validateScenario(s, TEST_CONFIG).map((i) => i.path)).toContain('contributions[0].startAge');
+    s.contributions[0].startAge = 40;
+    expect(validateScenario(s, TEST_CONFIG).map((i) => i.path)).not.toContain('contributions[0].startAge');
+  });
+});
+
+describe('one-off payments arrive at the end of the tax year', () => {
+  it('so they earn nothing in the year they arrive (annual and monthly steps)', () => {
+    // £10k cash earning 10%, plus £1,000 of outside money this year: £10k × 1.1 + £1,000, not £11k × 1.1.
+    const cfg = zeroWorldConfig();
+    cfg.market.cash = { meanReal: 0.10, vol: 0 };
+    for (const stepsPerYear of [1, 12] as const) {
+      const s = cashOnlyScenario({ startAge: 40, pot: 10_000, spend: 0, horizonYears: 2 });
+      s.sim.stepsPerYear = stepsPerYear;
+      s.contributions = [{ id: 'l', accountId: 'cash', personIndex: 0, type: 'lumpSum', amount: 1000, startAge: 40, endAge: 120, escalatesWithInflation: false, source: 'external' }];
+      const rows = simulate(s, cfg, { runsOverride: 1 }).centralCase;
+      expect(rows[0].portfolioEnd).toBeCloseTo(10_000 * 1.1 + 1000, 4);
+      expect(rows[1].portfolioEnd).toBeCloseTo((10_000 * 1.1 + 1000) * 1.1, 4);
+    }
+  });
+});

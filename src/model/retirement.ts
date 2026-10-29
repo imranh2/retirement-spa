@@ -20,12 +20,21 @@ export function withRetirementAge(s: Scenario, age: number): Scenario {
   };
 }
 
+/**
+ * Whether person 1's stop-work age is a choice worth exploring: they have a salary (even if the
+ * plan stops it this year), or a stop-work age still ahead of them.
+ */
+export function canChooseStopWork(s: Scenario): boolean {
+  const p = s.people[0];
+  return p !== undefined && (p.salary > 0 || p.retirementAge > currentAges(s)[0]);
+}
+
 /** Result of the earliest stop-work age search (engine/retireAge.ts). */
 export interface RetireAgeOutcome {
   /**
    * 'now': stopping work now already meets the target. 'found': `age` is the earliest age
    * that does. 'notReachable': even working until `latestTried` falls short.
-   * 'notWorking': person 1 has already stopped work, so there is nothing to search.
+   * 'notWorking': person 1 has no salary and has already stopped work, so there is nothing to search.
    */
   status: 'now' | 'found' | 'notReachable' | 'notWorking';
   age?: number;

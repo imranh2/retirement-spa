@@ -9,6 +9,7 @@ import { renderConfigEditor, refreshModifiedDots } from './configEditor';
 import { renderResults, progressBar } from './results';
 import { successBand } from './successBand';
 import { costsOnTop } from './verdict';
+import { canChooseStopWork } from '../model/retirement';
 
 /** Mount the single-page app into #app. */
 export function startApp(root: HTMLElement): Store {
@@ -87,7 +88,7 @@ export function startApp(root: HTMLElement): Store {
     const horizon = s.scenario.sim.horizonAge;
     const lastMedian = r ? r.portfolioReal.p50[r.portfolioReal.p50.length - 1] : undefined;
     // Only meaningful while person 1 is still working; "64 (3 years earlier…)" is shortened to the age.
-    const working = r !== undefined && (s.scenario.people[0]?.retirementAge ?? 0) > (r.ages[0] ?? 0);
+    const working = r !== undefined && canChooseStopWork(s.scenario);
     const retireText = s.retireAge?.status === 'found' ? String(s.retireAge.age) : s.retireAge?.status === 'now' ? 'Now' : s.retireAge?.status === 'notReachable' ? `Not by ${s.retireAge.latestTried}` : null;
     const problems = s.scenarioErrors.length + s.errors.filter((e) => e.severity !== 'warning').length;
     const parts: (Node | null)[] = [

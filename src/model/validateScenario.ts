@@ -37,6 +37,8 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     else if (v < 0) add(path, `${label} cannot be negative`);
   };
 
+  /** "Sam is 40", or "you are 40" for the quick start's "You". */
+  const isAge = (name: string, age: number) => (name === 'You' ? `you are ${age}` : `${name} is ${age}`);
   if (!isIsoDate(s.sim.startDate)) add('sim.startDate', 'Start date must be yyyy-mm-dd');
   const startOk = isIsoDate(s.sim.startDate);
   const age0Now = startOk && s.people[0] && isIsoDate(s.people[0].dateOfBirth) ? ageAt(s.people[0].dateOfBirth, s.sim.startDate) : undefined;
@@ -109,6 +111,10 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
     if (c.type === 'employerPctOfSalary' && acc && acc.type !== 'dcPension') add(`${pre}.type`, 'Employer contributions can only go into a DC pension');
     if (!CONTRIBUTION_TYPES.includes(c.type)) add(`${pre}.type`, 'Unknown contribution type');
     if (!Number.isInteger(c.startAge)) add(`${pre}.startAge`, 'Start age must be a whole number');
+    // A one-off payment is made only in the year the payer is that age, so a past age would never pay.
+    const payer = validPerson(c.personIndex) ? s.people[c.personIndex] : undefined;
+    const payerNow = startOk && payer && isIsoDate(payer.dateOfBirth) ? ageAt(payer.dateOfBirth, s.sim.startDate) : undefined;
+    if (c.type === 'lumpSum' && payerNow !== undefined && c.startAge < payerNow) add(`${pre}.startAge`, `This age has passed (${isAge(payer?.name || `person ${c.personIndex + 1}`, payerNow)}), so it would never be paid. Leave it blank for this year, or add money already paid in to the account balance.`);
     if (c.stopsWith !== undefined && !['work', 'age', 'ageEvenAfterWork'].includes(c.stopsWith)) add(`${pre}.stopsWith`, 'Choose when payments stop');
     if (c.source !== undefined && !['pay', 'external'].includes(c.source)) add(`${pre}.source`, 'Choose where the money comes from');
     else if (c.source === 'external' && c.type !== 'lumpSum') add(`${pre}.source`, 'Only a one-off lump sum can come from outside money');
@@ -143,7 +149,7 @@ export function validateScenario(s: Scenario, config?: ConfigBundle): ScenarioIs
       if (!release) add(`${pre}.downsize.releaseToAccountId`, 'Choose an account for the released money');
       else if (release.type !== 'cash' && release.type !== 'gia') add(`${pre}.downsize.releaseToAccountId`, 'Released money can only go into a cash account or GIA (ISA and pension allowances would apply)');
       if (!Number.isInteger(p.downsize.atAge)) add(`${pre}.downsize.atAge`, 'Enter a whole-number age');
-      else if (age0Now !== undefined && p.downsize.atAge < age0Now) add(`${pre}.downsize.atAge`, `This age has passed (${s.people[0]?.name || 'person 1'} is ${age0Now}). Enter the current value of the home you live in now instead.`);
+      else if (age0Now !== undefined && p.downsize.atAge < age0Now) add(`${pre}.downsize.atAge`, `This age has passed (${isAge(s.people[0]?.name || 'person 1', age0Now)}). Enter the current value of the home you live in now instead.`);
       nonNeg(`${pre}.downsize.newValue`, p.downsize.newValue, 'New home value');
     }
   });

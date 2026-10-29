@@ -44,8 +44,10 @@ export interface PersonYear {
 }
 
 export interface ContributionPlan {
-  /** Amount to add to each account (index aligned with `accounts`), including LISA bonus and overflow. */
+  /** Amount to add to each account at the start of the year (index aligned with `accounts`), including LISA bonus and overflow. */
   credits: number[];
+  /** One-off lump sums (and their overflow), added at the end of the tax year, after that year's returns. */
+  yearEndCredits: number[];
   /** Per person: gross employee contributions under net pay (deducted from taxable pay). */
   netPayGross: number[];
   /** Per person: gross relief-at-source contributions (basic band extension). */
@@ -92,6 +94,7 @@ export function planContributions(
 ): ContributionPlan {
   const n = people.length;
   const credits = new Array<number>(accounts.length).fill(0);
+  const yearEndCredits = new Array<number>(accounts.length).fill(0);
   const netPayGross = new Array<number>(n).fill(0);
   const reliefAtSourceGross = new Array<number>(n).fill(0);
   const pensionGross = new Array<number>(n).fill(0);
@@ -111,7 +114,9 @@ export function planContributions(
     return gia >= 0 ? gia : firstCash;
   };
 
-  interface Req { acc: number; amount: number; employer: boolean; external: boolean }
+  interface Req { acc: number; amount: number; employer: boolean; external: boolean; atYearEnd: boolean }
+  /** Add to an account now, or at the end of the year for a one-off lump sum. */
+  const credit = (r: Pick<Req, 'atYearEnd'>, acc: number, amount: number) => { (r.atYearEnd ? yearEndCredits : credits)[acc] += amount; };
   /** Charge a contribution to take-home pay, unless the money comes from outside the plan. */
   const fromPay = (r: Pick<Req, 'external'>, amount: number) => { if (!r.external) fromTakeHome += amount; };
   const pensionReqs: Req[][] = Array.from({ length: n }, () => []);
@@ -126,12 +131,12 @@ export function planContributions(
     const amount = contributionAmount(c, people[c.personIndex], py.age, py.grossSalary, inflationIndex);
     if (amount <= 0) continue;
     const acc = accounts[ai];
-    const req: Req = { acc: ai, amount, employer: c.type === 'employerPctOfSalary', external: c.type === 'lumpSum' && c.source === 'external' };
+    const req: Req = { acc: ai, amount, employer: c.type === 'employerPctOfSalary', external: c.type === 'lumpSum' && c.source === 'external', atYearEnd: c.type === 'lumpSum' };
     if (acc.type === 'dcPension') pensionReqs[c.personIndex].push(req);
     else if (acc.type === 'isa') isaReqs[c.personIndex].push(req);
     else if (acc.type === 'lisa') lisaReqs[c.personIndex].push(req);
     else if (acc.type === 'premiumBonds') bondReqs[acc.ownerIndex].push(req);
-    else { credits[ai] += amount; fromPay(req, amount); }
+    else { credit(req, ai, amount); fromPay(req, amount); }
   }
 
   for (let p = 0; p < n; p++) {
@@ -161,7 +166,7 @@ export function planContributions(
       for (const r of reqs) {
         const gross = r.amount * scale(r);
         if (gross <= 0) continue;
-        credits[r.acc] += gross;
+        credit(r, r.acc, gross);
         pensionGross[p] += gross;
         if (r.employer) continue;
         if (accounts[r.acc].pensionReliefMethod === 'reliefAtSource') {
@@ -181,7 +186,7 @@ export function planContributions(
     const sendOverflow = (r: Req, amount: number) => {
       if (amount <= 0) return;
       isaOverflow = true;
-      if (overflowTo >= 0) credits[overflowTo] += amount;
+      if (overflowTo >= 0) credit(r, overflowTo, amount);
       fromPay(r, amount);
     };
     for (const r of lisaReqs[p]) {
@@ -190,21 +195,21 @@ export function planContributions(
       if (!eligible) {
         // Not allowed into a LISA at this age: the money is saved in the overflow account instead.
         lisaIneligible = true;
-        if (overflowTo >= 0) credits[overflowTo] += r.amount;
+        if (overflowTo >= 0) credit(r, overflowTo, r.amount);
         fromPay(r, r.amount);
         continue;
       }
       if (!open) lisaOpened.push(r.acc);
       const take = Math.max(0, Math.min(r.amount, lisaRoom, isaRoom));
       lisaRoom -= take; isaRoom -= take;
-      credits[r.acc] += take * (1 + cfg.lisa.bonusRate);
+      credit(r, r.acc, take * (1 + cfg.lisa.bonusRate));
       fromPay(r, take);
       sendOverflow(r, r.amount - take);
     }
     for (const r of isaReqs[p]) {
       const take = Math.max(0, Math.min(r.amount, isaRoom));
       isaRoom -= take;
-      credits[r.acc] += take;
+      credit(r, r.acc, take);
       fromPay(r, take);
       sendOverflow(r, r.amount - take);
     }
@@ -215,16 +220,16 @@ export function planContributions(
     for (const r of bondReqs[p]) {
       const take = Math.max(0, Math.min(r.amount, bondRoom));
       bondRoom -= take;
-      credits[r.acc] += take;
+      credit(r, r.acc, take);
       fromPay(r, take);
       const rest = r.amount - take;
       if (rest > 0) {
         premiumBondsOverflow = true;
-        if (firstCash >= 0) credits[firstCash] += rest;
+        if (firstCash >= 0) credit(r, firstCash, rest);
         fromPay(r, rest);
       }
     }
   }
 
-  return { credits, netPayGross, reliefAtSourceGross, fromTakeHome, pensionGross, pensionCapped, allowanceTapered, isaOverflow, premiumBondsOverflow, lisaIneligible, lisaOpened, isaRoomLeft };
+  return { credits, yearEndCredits, netPayGross, reliefAtSourceGross, fromTakeHome, pensionGross, pensionCapped, allowanceTapered, isaOverflow, premiumBondsOverflow, lisaIneligible, lisaOpened, isaRoomLeft };
 }

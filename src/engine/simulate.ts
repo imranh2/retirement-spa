@@ -313,6 +313,8 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       if (amount - take > 0) { flags.isaOverflow = true; credit(overflowAccount(target.ownerIndex), amount - take); }
     };
     if (!monthly) for (let a = 0; a < balances.length; a++) { balances[a] += plan.credits[a]; creditGiaBasis(a, plan.credits[a]); }
+    /** One-off lump sums go in at the end of the tax year, after its returns. */
+    const addYearEnd = (b: number[]) => { for (let a = 0; a < b.length; a++) { b[a] += plan.yearEndCredits[a]; creditGiaBasis(a, plan.yearEndCredits[a]); } };
     flags.pensionCapped ||= plan.pensionCapped;
     flags.allowanceTapered ||= plan.allowanceTapered;
     flags.isaOverflow ||= plan.isaOverflow;
@@ -433,6 +435,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
       const yr = returns[t];
       nextBalances = failed ? ws.balances.map(() => 0) : ws.balances.map((b, a) => afterFixedFee(grow(b, a, yr, accounts[a].annualFeePct, prizeRate), a, fixedFee[a] * index));
       capBonds(nextBalances, cfg.premiumBonds.holdingLimit);
+      if (!failed) addYearEnd(nextBalances);
       ws = { ...ws, balances: nextBalances };
       properties.forEach((p, pi) => { propValue[pi] *= 1 + propertyNominalReturn(yr, p.growthRealPct, market.property.meanReal); });
       indexEnd = index * (1 + yr.inflation);
@@ -481,6 +484,7 @@ function runOne(prep: Prepared, runIndex: number, deterministic: boolean, spendM
           for (let a = 0; a < nA; a++) bal[a] = afterFixedFee(grow(bal[a], a, mr, monthlyFee[a], prizeRateMonthly), a, fixedFee[a] * index / MONTHS_PER_YEAR);
           capBonds(bal, cfg.premiumBonds.holdingLimit);
         }
+        if (k === MONTHS_PER_YEAR - 1 && !failed) addYearEnd(bal);
         for (let pi = 0; pi < properties.length; pi++) propValue[pi] *= 1 + propertyNominalReturn(mr, monthlyGrowth[pi].own, monthlyGrowth[pi].market);
         monthIndex *= 1 + mr.inflation;
         cashGrowth *= 1 + mr.cash;
@@ -707,6 +711,8 @@ export function createSimulation(scenario: Scenario, config: ConfigBundle, opts:
           portfolioEnd: y.portfolioEnd / y.indexEnd,
           propertyEquityEnd: y.propertyEquityEnd / y.indexEnd,
           mortgageBalanceEnd: y.mortgageBalanceEnd / y.indexEnd,
+          priceIndex: y.index,
+          priceIndexEnd: y.indexEnd,
         });
       });
       centralCase = rows;
